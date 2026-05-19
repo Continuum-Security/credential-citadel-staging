@@ -30,6 +30,12 @@ body{background:#000;display:flex;flex-direction:column;align-items:center;justi
 // ─── TELEMETRY ───────────────────────────────────────────────────────────────
 function emitEvent(name, payload={}) {
   console.log('[TELEMETRY-STAGING]', name, payload);
+  // Supabase tracking — fire-and-forget, game never waits or breaks on network error
+  if(name==='session.started')SUPA.startSession(payload.world||1);
+  else if(name==='wave.completed')SUPA.levelComplete(STATE.world,STATE.level,payload.score||STATE.score,STATE.quizzesPassed||0,STATE.quizzesRequired||0);
+  else if(name==='quiz.answered'&&STATE.quizActive)SUPA.quizAnswered(STATE.quizActive.boxEntity&&STATE.quizActive.boxEntity.quiz||'',STATE.world,STATE.level,payload.answer,payload.correct);
+  else if(name==='session.completed')SUPA.endSession('completed',payload.score||STATE.score,STATE.coins,STATE.world,STATE.quizzesPassed||0,STATE.quizzesRequired||0);
+  else if(name==='session.abandoned')SUPA.endSession('abandoned',payload.score||STATE.score,STATE.coins,Math.max(0,STATE.world-1),STATE.quizzesPassed||0,STATE.quizzesRequired||0);
   try { window.parent.postMessage({type:'cyberiq_event',event:name,...payload},'*'); } catch(e){}
 }
 
@@ -255,6 +261,138 @@ const QUIZZES = {
     correct:1,explain:'A dedicated recovery email with its own strong credentials and MFA is significantly more secure than SMS or knowledge-based answers.'}
 };
 
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUPABASE — credential-citadel-staging (anonymous play, fire-and-forget)
+// Project: https://qfgoatxuvrqnpghlbbkz.supabase.co
+// All calls are async and non-blocking — game never waits for the backend
+// ═══════════════════════════════════════════════════════════════════════════════
+const SUPA = {
+  url: 'https://qfgoatxuvrqnpghlbbkz.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmZ29hdHh1dnJxbnBnaGxiYmt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODg4MjYsImV4cCI6MjA5NDc2NDgyNn0.t0BwpjCafce1gOKwwPQYHMDm0qsh-VU5tfMwxk1CIm4',
+  sessionId: null,
+  anonymousId: null,
+  sessionStartTime: 0,
+
+  // Get or create a persistent anonymous ID stored in localStorage
+  init() {
+    let aid = null;
+    try { aid = localStorage.getItem('cc_anon_id'); } catch(e) {}
+    if (!aid) {
+      aid = (crypto.randomUUID ? crypto.randomUUID() : 'anon-'+Date.now()+'-'+Math.random().toString(36).slice(2));
+      try { localStorage.setItem('cc_anon_id', aid); } catch(e) {}
+    }
+    this.anonymousId = aid;
+    return aid;
+  },
+
+  // Fire-and-forget POST — never blocks or throws to the game
+  _post(table, body) {
+    if (!this.anonymousId) this.init();
+    fetch(`${this.url}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: {
+        'apikey': this.key,
+        'Authorization': `Bearer ${this.key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(body)
+    }).catch(()=>{});  // silent fail — game never breaks on network error
+  },
+
+  // Fire-and-forget PATCH by id
+  _patch(table, id, body) {
+    fetch(`${this.url}/rest/v1/${table}?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': this.key,
+        'Authorization': `Bearer ${this.key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(body)
+    }).catch(()=>{});
+  },
+
+  // Called when player presses PLAY — creates session row
+  startSession(world) {
+    this.init();
+    this.sessionId = (crypto.randomUUID ? crypto.randomUUID() : 'sess-'+Date.now()+'-'+Math.random().toString(36).slice(2));
+    this.sessionStartTime = Date.now();
+    this._post('game_sessions', {
+      id: this.sessionId,
+      anonymous_id: this.anonymousId,
+      game_type: 'credential-citadel',
+      status: 'started',
+      current_world: world,
+      current_level: 1,
+      score: 0,
+      lives: 3,
+      coins: 0
+    });
+  },
+
+  // Called each time a level/wave is completed
+  levelComplete(world, level, score, quizCorrect, quizTotal) {
+    if (!this.sessionId) return;
+    this._post('level_completions', {
+      session_id: this.sessionId,
+      anonymous_id: this.anonymousId,
+      world, level,
+      score_at_level: score,
+      quiz_correct: quizCorrect,
+      quiz_total: quizTotal
+    });
+    this._patch('game_sessions', this.sessionId, {
+      current_world: world,
+      current_level: level,
+      score, quiz_correct: quizCorrect, quiz_total: quizTotal
+    });
+  },
+
+  // Called when player answers a quiz box
+  quizAnswered(quizKey, world, level, answerIdx, correct) {
+    if (!this.sessionId || !quizKey) return;
+    this._post('quiz_answers', {
+      session_id: this.sessionId,
+      anonymous_id: this.anonymousId,
+      quiz_key: quizKey,
+      world, level,
+      answer_idx: answerIdx,
+      correct
+    });
+  },
+
+  // Called on victory or game-over — finalises the session
+  endSession(status, score, coins, worldsCompleted, quizCorrect, quizTotal) {
+    if (!this.sessionId) return;
+    const ms = Date.now() - this.sessionStartTime;
+    const acc = quizTotal > 0 ? Math.round((quizCorrect/quizTotal)*100) : 0;
+    const tier = score>=10000?'platinum':score>=5000?'gold':score>=2000?'silver':'bronze';
+    this._patch('game_sessions', this.sessionId, {
+      status, score, coins,
+      worlds_completed: worldsCompleted,
+      quiz_correct: quizCorrect,
+      quiz_total: quizTotal,
+      completed_at: new Date().toISOString()
+    });
+    this._post('unified_game_results', {
+      game_id: 'credential-citadel',
+      anonymous_id: this.anonymousId,
+      session_duration_ms: ms,
+      decision_accuracy: acc,
+      quiz_correct: quizCorrect,
+      quiz_total: quizTotal,
+      cyber_iq_score: score,
+      raw_score: score,
+      tier,
+      meta: { worlds_completed: worldsCompleted, coins }
+    });
+    this.sessionId = null;  // reset for next play
+  }
+};
 
 // ─── TRAINING DATA ────────────────────────────────────────────────────────────
 const TR={

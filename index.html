@@ -920,6 +920,7 @@ const STATE={
   coinsThisLevel:0,      // coins collected on current level
   coinsTotalThisLevel:0, // total coins available on current level
   _coinBonusLife:false,  // flag: earned bonus life on this level
+  quizLog:{},          // {[quizKey]:{q,opts,correct,firstSelected,firstCorrect,explain}} — first attempt per box
   levelProgress:{},      // {world: highestLevelBeaten} — tracks per-world progress
   levelSelectWorld:1,    // which world is open in the level select
   entryTipActive:false,  // castle entry tip card — show until player dismisses
@@ -1062,6 +1063,7 @@ function loadLevel(world,level){
   // Quiz progress gate: count how many quiz boxes are in this level
   STATE.quizzesRequired=lv.boxes.filter(b=>b.quiz&&QUIZZES[b.quiz]).length;
   STATE.quizzesPassed=0;
+  STATE.quizLog={};
   // Castle entry tip — show on every (re-)enter
   STATE.entryTipActive=!!lv.hasBoss;
   // Per-level intel + coin tracking
@@ -1857,6 +1859,9 @@ function handleQuizAnswer(idx){
   STATE.quizActive.selected=idx;
   const q=STATE.quizActive.quiz;
   const correct=idx===q.correct;
+  // Log first attempt for level-complete breakdown (first try only — most honest signal)
+  const _qk=STATE.quizActive.boxEntity&&STATE.quizActive.boxEntity.quiz||'';
+  if(_qk&&!STATE.quizLog[_qk])STATE.quizLog[_qk]={q:q.q,opts:q.opts,correct:q.correct,firstSelected:idx,firstCorrect:correct,explain:q.explain};
   STATE.quizActive.result=correct?'correct':'wrong';
   emitEvent('quiz.answered',{correct,answer:idx});
 
@@ -3561,57 +3566,158 @@ function drawPauseMenu(){
 }
 
 function drawLevelComplete(){
-  ctx.fillStyle='rgba(2,6,23,0.92)';ctx.fillRect(0,0,canvas.width,canvas.height);
-  // Title
-  ctx.fillStyle=C.EMERALD;ctx.font='bold 30px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText('LEVEL COMPLETE!',canvas.width/2,80);
+  const W=canvas.width,H=canvas.height;
+  ctx.fillStyle='rgba(2,6,23,0.95)';ctx.fillRect(0,0,W,H);
+  // Subtle radial tint
+  const vg=ctx.createRadialGradient(W/2,H/2,30,W/2,H/2,340);
+  vg.addColorStop(0,'rgba(16,185,129,0.05)');vg.addColorStop(1,'rgba(2,6,23,0)');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+
+  // ── TITLE ──
+  ctx.fillStyle=C.EMERALD;ctx.font='bold 26px Inter';ctx.textBaseline='middle';
+  ctx.fillText('LEVEL COMPLETE!',W/2,22);
+  const lv=STATE.currentLevel;
+  const lvId=lv?lv.id:'';
+  const mission=TR.mission[lvId];
+  if(mission){
+    ctx.fillStyle='rgba(34,211,238,0.65)';ctx.font='10px Inter';
+    ctx.fillText('W'+STATE.world+'-'+STATE.level+' · '+mission.topic,W/2,40);
+  }
+
+  // ── SCORE PERCENTAGE ──
+  const total=STATE.quizzesRequired||0;
+  const passed=STATE.quizzesPassed||0;
+  const pct=total>0?Math.round((passed/total)*100):100;
+  const scoreCol=pct===100?'#f59e0b':pct>=75?'#34d399':pct>=50?'#60a5fa':'#fb923c';
+  ctx.save();
+  ctx.shadowColor=scoreCol;ctx.shadowBlur=22;
+  ctx.fillStyle=scoreCol;ctx.font='bold 50px Inter';ctx.textBaseline='middle';
+  ctx.fillText(pct+'%',W/2,84);
+  ctx.restore();
+  if(total>0){
+    ctx.fillStyle='rgba(148,163,184,0.65)';ctx.font='10px Inter';ctx.textBaseline='middle';
+    ctx.fillText(passed+' of '+total+' questions correct',W/2,114);
+  }
+  // Encouraging message
+  const encMsg=pct===100?'Perfect score — you nailed every question! 🏆':
+               pct>=75?'Excellent! Strong security instincts 🛡':
+               pct>=50?'Good effort! Keep building those defences 💪':
+               pct>=25?'Nice start — every lesson makes you stronger 🔑':
+                       'Keep going — every mistake is a lesson 🌱';
+  ctx.fillStyle=C.WHITE;ctx.font='bold 12px Inter';ctx.textBaseline='middle';
+  ctx.fillText(encMsg,W/2,130);
   if(STATE._coinBonusLife){
     const bla=0.7+0.3*Math.sin(STATE.frame*0.1);
-    ctx.fillStyle=`rgba(251,191,36,${bla})`;ctx.font='bold 13px Inter';
-    ctx.fillText('💰 COIN COLLECTOR! +1 LIFE BONUS',canvas.width/2,108);
+    ctx.fillStyle=`rgba(251,191,36,${bla})`;ctx.font='bold 10px Inter';ctx.textBaseline='middle';
+    ctx.fillText('💰 COIN COLLECTOR BONUS — +1 LIFE EARNED!',W/2,148);
   }
-  // Score row
-  ctx.fillStyle=C.AMBER;ctx.font='18px Inter';ctx.fillText('Score: '+STATE.score,canvas.width/2,128);
-  ctx.fillStyle=C.WHITE;ctx.font='13px Inter';ctx.fillText('Coins: '+STATE.coins,canvas.width/2,158);
-  const lv=STATE.currentLevel;
+
+  // ── KNOWLEDGE CHECK ──
+  ctx.fillStyle='rgba(71,85,105,0.55)';ctx.font='8px Inter';ctx.textBaseline='middle';
+  ctx.fillText('── KNOWLEDGE CHECK ──',W/2,160);
+
+  const qBoxes=lv?lv.boxes.filter(b=>b.quiz&&QUIZZES[b.quiz]):[];
+  const rowH=46,startY=168,rowW=716,rowX=(W-rowW)/2;
+
+  if(qBoxes.length===0){
+    ctx.fillStyle='rgba(148,163,184,0.4)';ctx.font='11px Inter';ctx.textBaseline='middle';
+    ctx.fillText('No quiz challenges in this level.',W/2,200);
+  } else {
+    qBoxes.forEach((box,i)=>{
+      const qKey=box.quiz;
+      const qDef=QUIZZES[qKey];
+      const log=STATE.quizLog&&STATE.quizLog[qKey];
+      const ry=startY+i*rowH;
+      const rh=rowH-3;
+      // Row bg + border
+      const bgCol=!log?'rgba(30,41,59,0.5)':log.firstCorrect?'rgba(16,185,129,0.08)':'rgba(234,179,8,0.08)';
+      const brdCol=!log?'rgba(71,85,105,0.35)':log.firstCorrect?'rgba(16,185,129,0.30)':'rgba(234,179,8,0.30)';
+      rrFill(rowX,ry,rowW,rh,5,bgCol);
+      ctx.strokeStyle=brdCol;ctx.lineWidth=1;roundRect(rowX,ry,rowW,rh,5);ctx.stroke();
+      // Status circle
+      const icx=rowX+13,icy=ry+rh/2;
+      ctx.beginPath();ctx.arc(icx,icy,9,0,Math.PI*2);
+      ctx.fillStyle=!log?'rgba(71,85,105,0.55)':log.firstCorrect?'rgba(16,185,129,0.9)':'rgba(234,179,8,0.9)';
+      ctx.fill();
+      ctx.fillStyle='rgba(2,6,23,0.85)';ctx.font='bold 11px Inter';ctx.textBaseline='middle';ctx.textAlign='center';
+      ctx.fillText(!log?'?':log.firstCorrect?'✓':'↺',icx,icy);
+      // Question text
+      const tx3=rowX+28,maxQW=rowW-36;
+      ctx.textAlign='left';ctx.textBaseline='top';
+      ctx.fillStyle=C.WHITE;ctx.font='bold 9px Inter';
+      let qt=qDef.q;
+      while(ctx.measureText(qt).width>maxQW-96&&qt.length>10)qt=qt.slice(0,-4)+'...';
+      ctx.fillText(qt,tx3,ry+4);
+      // Tag (right-aligned)
+      if(log){
+        ctx.textAlign='right';ctx.font='bold 8px Inter';
+        ctx.fillStyle=log.firstCorrect?'rgba(16,185,129,0.85)':'rgba(234,179,8,0.85)';
+        ctx.fillText(log.firstCorrect?'FIRST TRY ✓':'GOT IT ↺',rowX+rowW-8,ry+4);
+        ctx.textAlign='left';
+      }
+      // Detail line
+      if(log&&!log.firstCorrect){
+        const hw=(maxQW-6)/2;
+        const selText=log.firstSelected>=0&&log.firstSelected<qDef.opts.length?qDef.opts[log.firstSelected]:'—';
+        let wl='You chose: '+selText;
+        while(ctx.measureText(wl).width>hw&&wl.length>10)wl=wl.slice(0,-4)+'...';
+        ctx.fillStyle='rgba(248,113,113,0.75)';ctx.font='8px Inter';ctx.textBaseline='top';
+        ctx.fillText(wl,tx3,ry+17);
+        let rl='Correct: '+qDef.opts[qDef.correct];
+        while(ctx.measureText(rl).width>hw&&rl.length>10)rl=rl.slice(0,-4)+'...';
+        ctx.fillStyle='rgba(52,211,153,0.8)';
+        ctx.fillText(rl,tx3+hw+4,ry+17);
+      } else if(log&&log.firstCorrect){
+        ctx.fillStyle='rgba(52,211,153,0.72)';ctx.font='8px Inter';ctx.textBaseline='top';
+        let cl='Answer: '+qDef.opts[qDef.correct];
+        while(ctx.measureText(cl).width>maxQW-4&&cl.length>10)cl=cl.slice(0,-4)+'...';
+        ctx.fillText(cl,tx3,ry+17);
+      }
+      // Explanation
+      ctx.fillStyle='rgba(100,116,139,0.70)';ctx.font='8px Inter';ctx.textBaseline='top';
+      let ex=qDef.explain;
+      while(ctx.measureText(ex).width>maxQW-4&&ex.length>10)ex=ex.slice(0,-4)+'...';
+      ctx.fillText(ex,tx3,ry+28);
+    });
+  }
+
+  // ── BADGE + FACT ──
+  const sectionEnd=Math.max(startY+Math.max(qBoxes.length,1)*rowH+4,340);
   if(lv&&!lv.scaffold){
-    // Lesson line
-    ctx.fillStyle=C.CYAN;ctx.font='11px Inter';
-    ctx.fillText('Lesson: '+getLevelLesson(lv.id),canvas.width/2,184);
-    // Security badge
     const bd=TR.complete[lv.id];
     if(bd){
-      const bw=360,bh=36,bx=(canvas.width-bw)/2,by=206;
-      rrFill(bx,by,bw,bh,8,'rgba(251,191,36,0.12)');
-      ctx.strokeStyle=C.AMBER;ctx.lineWidth=1.2;roundRect(bx,by,bw,bh,8);ctx.stroke();
-      ctx.fillStyle=C.AMBER;ctx.font='bold 12px Inter';ctx.textBaseline='middle';
-      ctx.fillText(bd.badge,canvas.width/2,by+bh/2);
-      // Real-world tie-in box
-      const fw=canvas.width-80,fh=50,fx=40,fy=252;
-      rrFill(fx,fy,fw,fh,8,'rgba(34,211,238,0.06)');
-      ctx.strokeStyle='rgba(34,211,238,0.25)';ctx.lineWidth=1;roundRect(fx,fy,fw,fh,8);ctx.stroke();
-      ctx.fillStyle='rgba(34,211,238,0.6)';ctx.font='bold 9px Inter';ctx.textAlign='left';ctx.textBaseline='top';
-      ctx.fillText('REAL-WORLD CONTEXT',fx+12,fy+8);
-      ctx.fillStyle=C.SLATE;ctx.font='10px Inter';
-      // Word-wrap the fact
-      const words=bd.fact.split(' ');let line='';let ly=fy+22;
-      words.forEach(w=>{
-        const test=line?line+' '+w:w;
-        if(ctx.measureText(test).width>fw-24){ctx.fillText(line,fx+12,ly);line=w;ly+=13;}
-        else line=test;
+      const bw=340,bh=26,bx2=(W-bw)/2;
+      rrFill(bx2,sectionEnd,bw,bh,7,'rgba(251,191,36,0.10)');
+      ctx.strokeStyle='rgba(251,191,36,0.45)';ctx.lineWidth=1;roundRect(bx2,sectionEnd,bw,bh,7);ctx.stroke();
+      ctx.fillStyle=C.AMBER;ctx.font='bold 10px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(bd.badge,W/2,sectionEnd+bh/2);
+      // Fact box
+      const fy2=sectionEnd+32,fw=W-70,fh=32,fx2=35;
+      rrFill(fx2,fy2,fw,fh,6,'rgba(34,211,238,0.05)');
+      ctx.strokeStyle='rgba(34,211,238,0.18)';ctx.lineWidth=1;roundRect(fx2,fy2,fw,fh,6);ctx.stroke();
+      ctx.fillStyle='rgba(34,211,238,0.5)';ctx.font='bold 7px Inter';ctx.textAlign='left';ctx.textBaseline='top';
+      ctx.fillText('REAL-WORLD CONTEXT',fx2+10,fy2+5);
+      ctx.fillStyle=C.SLATE;ctx.font='9px Inter';
+      const wds=bd.fact.split(' ');let ln='';let ly3=fy2+15;
+      wds.forEach(w=>{
+        const t=ln?ln+' '+w:w;
+        if(ctx.measureText(t).width>fw-20){ctx.fillText(ln,fx2+10,ly3);ln=w;ly3+=11;}
+        else ln=t;
       });
-      if(line)ctx.fillText(line,fx+12,ly);
+      if(ln)ctx.fillText(ln,fx2+10,ly3);
     }
   }
-  // Continue button
-  const cbW=220,cbH=40,cbX=(canvas.width-cbW)/2,cbY=322;
+
+  // ── CONTINUE BUTTON ──
+  const cbW=220,cbH=34,cbX=(W-cbW)/2,cbY=H-42;
   const cbPulse=0.85+0.15*Math.sin(STATE.frame*0.08);
   const cbG=ctx.createLinearGradient(cbX,cbY,cbX+cbW,cbY+cbH);
   cbG.addColorStop(0,`rgba(34,211,238,${cbPulse})`);cbG.addColorStop(1,`rgba(14,116,144,${cbPulse})`);
   rrFill(cbX,cbY,cbW,cbH,8,C.DARK);
   ctx.fillStyle=cbG;roundRect(cbX,cbY,cbW,cbH,8);ctx.fill();
-  ctx.fillStyle=C.BG;ctx.font='bold 14px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText('CONTINUE  →',canvas.width/2,cbY+cbH/2);
+  ctx.fillStyle=C.BG;ctx.font='bold 13px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('CONTINUE  →',W/2,cbY+cbH/2);
 }
 
 function getLevelLesson(id){

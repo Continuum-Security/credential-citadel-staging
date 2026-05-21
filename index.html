@@ -196,7 +196,7 @@ const FRICTION      = 0.78;   // spec + critique value
 const MAX_SPEED     = 3.0;    // reduced 40% from 5.0 — player was way too fast
 const RUN_SPEED     = 5.4;    // reduced 40% from 9.0
 const ACCEL         = 0.42;   // reduced 40% from 0.70
-const INVULN_FRAMES = 90;
+const INVULN_FRAMES = 45; // 0.75s — was 90 (1.5s too long)
 const GRACE_FRAMES  = 6;
 const MOVE_STEPS    = 4;       // physics sub-steps per frame
 
@@ -555,9 +555,9 @@ function buildLevel1_1(){
   const enemies=[
     {type:'goomba',tx:10,ty:H-2},
     {type:'goomba',tx:24,ty:H-2},
-    {type:'goomba',tx:32,ty:10},   // on platform
+    {type:'goomba',tx:25,ty:11},   // on platform row 10 (within bounds tx=22-27)
     {type:'goomba',tx:48,ty:H-2},
-    {type:'goomba',tx:58,ty:11},   // in alcove approach
+    {type:'goomba',tx:57,ty:11},   // in alcove approach
     {type:'goomba',tx:73,ty:H-2},
     {type:'goomba',tx:88,ty:H-2},
     {type:'goomba',tx:98,ty:H-2},
@@ -570,13 +570,20 @@ function buildLevel1_1(){
   ];
   for(const b of boxes) tiles[b.ty][b.tx]=4;
   const coins=[];
-  for(const cx of [6,8,10,15,17,19,23,25,31,33,39,41,47,49,56,58,64,66,74,76,88,90,96,98,102])
+  // Ground-level coins (spread)
+  for(const cx of [6,8,10,48,50,73,75,88,90,96,98,102])
     coins.push({tx:cx,ty:H-3});
-  for(let cx=63;cx<=67;cx++) coins.push({tx:cx,ty:9});
+  // Platform coins — give players reason to climb each step!
+  for(const cx of [15,16,17,18]) coins.push({tx:cx,ty:10});  // platform row 11
+  for(const cx of [23,24,25,26]) coins.push({tx:cx,ty:9});   // platform row 10
+  for(const cx of [31,32,33,34]) coins.push({tx:cx,ty:8});   // platform row 9
+  for(const cx of [39,40,41,42]) coins.push({tx:cx,ty:7});   // platform row 8 (highest step)
+  for(const cx of [63,64,65,66]) coins.push({tx:cx,ty:9});   // alcove floor
+  for(const cx of [91,92,93,94]) coins.push({tx:cx,ty:9});   // late platform
   const intels=[
-    {tx:19,ty:9, idx:0},   // above low platform, zone 1
-    {tx:44,ty:7, idx:1},   // high step, zone 2
-    {tx:78,ty:8, idx:2},   // late platform, zone 4
+    {tx:16,ty:10, idx:0},  // on low platform row 11 — player collects walking across
+    {tx:40,ty:7,  idx:1},  // on highest step row 8 — must climb to get it
+    {tx:92,ty:9,  idx:2},  // on late platform row 10 — near end of level
   ];
   return{
     id:'1-1',name:'Plain Beginnings',world:1,level:1,
@@ -630,13 +637,16 @@ function buildLevel1_2(){
   ];
   for(const b of boxes) tiles[b.ty][b.tx]=4;
   const coins=[];
-  for(const cx of [5,7,14,16,23,28,36,38,49,52,60,62,69,71,78,80,84,86,90,92])
+  for(const cx of [5,7,23,28,36,38,80,84,86,90,92])
     coins.push({tx:cx,ty:H-3});
-  for(let cx=59;cx<=62;cx++) coins.push({tx:cx,ty:4});
+  for(const cx of [49,50,51,52,53]) coins.push({tx:cx,ty:9});   // platform row 10
+  for(const cx of [59,60,61,62])    coins.push({tx:cx,ty:3});   // coin pocket row 5
+  for(const cx of [68,69,70,71,72]) coins.push({tx:cx,ty:9});   // platform row 10
+  for(const cx of [77,78,79,80])    coins.push({tx:cx,ty:8});   // brick platform row 9
   const intels=[
-    {tx:11,ty:H-4, idx:0},   // above first wall
-    {tx:55,ty:9,   idx:1},   // on mid platform
-    {tx:79,ty:8,   idx:2},   // on brick platform
+    {tx:12,ty:H-5, idx:0},   // above ground wall — must jump over it to collect
+    {tx:51,ty:9,   idx:1},   // on mid platform row 10 — requires reaching platform
+    {tx:78,ty:7,   idx:2},   // above brick platform row 9 — highest spot in level
   ];
   return{
     id:'1-2',name:'Spiny Crossing',world:1,level:2,
@@ -690,13 +700,22 @@ function buildLevel1_3(){
   ];
   for(const b of boxes) tiles[b.ty][b.tx]=4;
   const coins=[];
-  for(const cx of [5,7,10,16,18,22,24,31,33,40,43,46,54,56,66,69,72,83,85,88,93,95])
-    coins.push({tx:cx,ty:H-6});
+  // Ground approach coins
+  for(const cx of [5,7,10,93,95]) coins.push({tx:cx,ty:H-3});
+  // Bridge coins (bridges at H-5=11)
+  for(const cx of [16,17,18,19,20]) coins.push({tx:cx,ty:H-6});  // bridge 1
+  for(const cx of [40,41,42,43,44]) coins.push({tx:cx,ty:H-6});  // bridge 2
+  for(const cx of [67,68,69,70,71]) coins.push({tx:cx,ty:H-6});  // bridge 3
+  // High platform coins (H-8=8) — must climb to get!
+  for(const cx of [18,19,20,21]) coins.push({tx:cx,ty:H-9});
+  for(const cx of [42,43,44,45]) coins.push({tx:cx,ty:H-9});
+  // Late platform + underwater
+  for(const cx of [83,84,85,86]) coins.push({tx:cx,ty:H-5});
   for(let cx=39;cx<=50;cx++) coins.push({tx:cx,ty:H-3,underwater:true});
   const intels=[
-    {tx:17,ty:H-10, idx:0},  // above first bridge high platform
-    {tx:42,ty:H-10, idx:1},  // above second bridge
-    {tx:84,ty:H-6,  idx:2},  // on late platform
+    {tx:19,ty:H-10, idx:0},  // on first high platform — must climb to collect
+    {tx:43,ty:H-10, idx:1},  // on second high platform
+    {tx:85,ty:H-6,  idx:2},  // on late platform — near end
   ];
   return{
     id:'1-3',name:'Brute-Force Brook',world:1,level:3,
@@ -745,12 +764,18 @@ function buildLevel1_4(){
   ];
   for(const b of boxes) tiles[b.ty][b.tx]=4;
   const coins=[];
-  for(const cx of [6,8,10,13,20,22,24,28,35,38,42,48,52,56,62,64,66,72,74,76,82,84])
-    coins.push({tx:cx,ty:H-4});
+  // Coins on each staircase step — player MUST climb to collect all
+  for(const cx of [6,7,8,9,10])    coins.push({tx:cx,ty:H-4});  // step 1 row H-3=13
+  for(const cx of [19,20,21,22])   coins.push({tx:cx,ty:H-6});  // step 2 row H-5=11
+  for(const cx of [33,34,35,36])   coins.push({tx:cx,ty:H-8});  // step 3 row H-7=9
+  for(const cx of [47,48,49,50])   coins.push({tx:cx,ty:H-10}); // peak step 4 row H-9=7
+  for(const cx of [61,62,63,64])   coins.push({tx:cx,ty:H-8});  // descent step 1
+  for(const cx of [71,72,73,74])   coins.push({tx:cx,ty:H-6});  // descent step 2
+  for(const cx of [81,82,83,84])   coins.push({tx:cx,ty:H-4});  // descent step 3 (near flag)
   const intels=[
-    {tx:10,ty:H-5, idx:0},   // step 1
-    {tx:36,ty:H-9, idx:1},   // step 3
-    {tx:64,ty:H-9, idx:2},   // descent step 1
+    {tx:10,ty:H-5, idx:0},   // step 1 — easy reach, introduces system
+    {tx:49,ty:H-11,idx:1},   // peak step 4 — highest point, must fully climb
+    {tx:62,ty:H-9, idx:2},   // descent step 1 — on the way back down
   ];
   return{
     id:'1-4',name:'Repeating Heights',world:1,level:4,
@@ -809,12 +834,20 @@ function buildLevel1_Castle(){
   ];
   for(const b of boxes) tiles[b.ty][b.tx]=4;
   const coins=[];
-  for(const cx of [4,6,9,11,14,16,20,22,28,31,35,38,47,50,53,60,64,68,72])
-    coins.push({tx:cx,ty:H-3});
+  // Corridor coins
+  for(const cx of [4,6,9,11,14,16,20,22]) coins.push({tx:cx,ty:H-3});
+  // Lava platform coins — must cross dangerous lava to get them!
+  for(const cx of [28,29,30]) coins.push({tx:cx,ty:H-6});        // lava plat 1
+  for(const cx of [34,35,36]) coins.push({tx:cx,ty:H-6});        // lava plat 2
+  for(const cx of [39,40,41]) coins.push({tx:cx,ty:H-6});        // lava plat 3
+  // Castle high platforms — must climb
+  for(const cx of [47,48,49,50]) coins.push({tx:cx,ty:H-5});     // castle row H-4=12
+  for(const cx of [51,52,53])    coins.push({tx:cx,ty:H-8});     // castle upper H-7=9
+  for(const cx of [60,61,62])    coins.push({tx:cx,ty:H-3});     // boss approach
   const intels=[
-    {tx:8, ty:H-5, idx:0},   // early corridor
-    {tx:34,ty:H-7, idx:1},   // on lava platform
-    {tx:51,ty:H-6, idx:2},   // castle section
+    {tx:9, ty:H-4, idx:0},   // early corridor — easy intro
+    {tx:35,ty:H-7, idx:1},   // middle lava platform — risky to reach
+    {tx:52,ty:H-9, idx:2},   // castle upper platform — must climb
   ];
   return{
     id:'1-C',name:"The Reuser's Keep",world:1,level:5,
@@ -971,7 +1004,7 @@ function makeCoin(tx,ty,underwater){
 }
 
 function makeIntelScroll(tx,ty,content){
-  return{type:'intel',x:tx*32+2,y:ty*32-4,w:28,h:36,content,collected:false,bobPhase:0,glowPhase:0};
+  return{type:'intel',x:tx*32+2,y:ty*32-4,w:28,h:36,content,alive:true,collected:false,bobPhase:0,glowPhase:0};
 }
 
 function makeMushroom(x,y){
@@ -1359,7 +1392,7 @@ function updateEntities(lv){
   checkBoxBump(lv); // process any box bump registered by resolveY this frame
   for(let i=entities.length-1;i>=0;i--){
     const e=entities[i];
-    if(!e.alive&&e.type!=='box'&&e.type!=='coin'&&e.type!=='flagpole'){
+    if(!e.alive&&e.type!=='box'&&e.type!=='coin'&&e.type!=='flagpole'&&e.type!=='intel'){
       if(e.stompTimer>0){e.stompTimer--;continue;}
       else{entities.splice(i,1);continue;}
     }
@@ -1695,7 +1728,7 @@ function updateHeart(e,lv){
   if(e.age>200)e.collected=true;
   if(!player||player.dead)return;
   if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    e.collected=true;STATE.lives++;Audio.powerup(4);
+    e.collected=true;if(STATE.lives<6)STATE.lives++;Audio.powerup(4);
     spawnParticles(e.x+T/2,e.y,C.RED,8);
     STATE.tr.powerupCard={...TR.powerupMsg.heart,timer:140};
     emitEvent('lives.changed',{lives:STATE.lives});
@@ -1800,7 +1833,7 @@ function checkFlagpole(e,lv){
       return;
     }
     // Coin bonus life check — 90% of level coins collected
-    if(STATE.coinsTotalThisLevel>0&&STATE.coinsThisLevel>=Math.ceil(STATE.coinsTotalThisLevel*0.9)&&STATE.lives<3){
+    if(STATE.coinsTotalThisLevel>0&&STATE.coinsThisLevel>=Math.ceil(STATE.coinsTotalThisLevel*0.9)&&STATE.lives<6){
       STATE.lives++;STATE._coinBonusLife=true;
       emitEvent('lives.changed',{lives:STATE.lives});
     }
@@ -2073,7 +2106,6 @@ function drawTile(tile,sx,sy){
 
 function drawLevel(lv){
   // Draw intel terminal behind tiles
-  drawIntelTerminal(lv);
   const startX=Math.max(0,Math.floor(camera.x/T)-1);
   const endX=Math.min(lv.w,startX+Math.ceil(canvas.width/T)+2); // exact viewport + 2 tile buffer
   for(let ty=0;ty<lv.h;ty++){
@@ -2664,15 +2696,7 @@ function updateTraining(){
       }
     }
   }
-  // Intel terminal proximity check
-  const lv=STATE.currentLevel;
-  const itx=lv&&TR.intelTx[lv.id];
-  if(itx&&player&&!player.dead){
-    const termX=itx*T;
-    const nearTerm=Math.abs(player.x+player.w/2-termX)<40;
-    if(nearTerm&&!tr.intelPanel)showIntelPanel(lv.id);
-    if(!nearTerm&&tr.intelPanel&&tr.intelPanel.timer>30)tr.intelPanel.timer=30; // fast-fade when walking away
-  }
+  // Intel terminal removed — collectible scrolls handle intel now
   // Breach ticker scroll — cache string, only rebuild on index change
   if(!tr._tickerStr||tr._tickerIdx_last!==tr.tickerIdx){
     tr._tickerStr=TR.ticker[tr.tickerIdx%TR.ticker.length]+'     ';
@@ -2958,7 +2982,9 @@ function drawIntelOverlay(){
   const c=io.content;
   const CW=520,CX=(canvas.width-CW)/2,CY=70;
   const lines=(c.body||'').split('\n');
-  const CH=44+lines.length*32+40;
+  // Estimate height: measure each line for wrapping (rough: 22px per wrapped line)
+  const _estLines=lines.reduce((n,l)=>n+Math.max(1,Math.ceil(l.length*7.5/(CW-36))),0);
+  const CH=54+_estLines*22+48;
   ctx.save();
   // Dim the background slightly so card pops
   ctx.fillStyle='rgba(2,6,23,0.55)';ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -2982,12 +3008,20 @@ function drawIntelOverlay(){
   // Horizontal rule
   ctx.strokeStyle='rgba(34,211,238,0.2)';ctx.lineWidth=1;
   ctx.beginPath();ctx.moveTo(CX+16,CY+44);ctx.lineTo(CX+CW-16,CY+44);ctx.stroke();
-  // Body lines — large, legible
-  lines.forEach((line,i)=>{
-    ctx.fillStyle=i===0?'#f1f5f9':'rgba(203,213,225,0.9)';
-    ctx.font=i===0?'bold 15px Inter,system-ui,sans-serif':'15px Inter,system-ui,sans-serif';
-    ctx.textAlign='left';ctx.textBaseline='top';
-    ctx.fillText(line,CX+18,CY+54+i*32);
+  // Body — word-wrap each line so nothing overflows the card
+  const _maxW=CW-36;let _ly=CY+54;
+  lines.forEach((rawLine,li)=>{
+    ctx.font=li===0?'bold 13px Inter,system-ui,sans-serif':'13px Inter,system-ui,sans-serif';
+    ctx.fillStyle=li===0?'#f1f5f9':'rgba(203,213,225,0.9)';
+    const _words=rawLine.split(' ');let _wl='';
+    _words.forEach(w=>{
+      const _t=_wl?_wl+' '+w:w;
+      if(ctx.measureText(_t).width>_maxW){
+        ctx.textAlign='left';ctx.textBaseline='top';
+        ctx.fillText(_wl,CX+18,_ly);_wl=w;_ly+=18;
+      } else _wl=_t;
+    });
+    if(_wl){ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText(_wl,CX+18,_ly);_ly+=22;}
   });
   // Dismiss button
   const bW=200,bH=36,bX=CX+(CW-bW)/2,bY=CY+CH-50;
@@ -3043,8 +3077,10 @@ function drawHUD(){
   ctx.beginPath();ctx.moveTo(0,36);ctx.lineTo(canvas.width,36);ctx.stroke();
 
   // ── LEFT: lives + score ──────────────────────────────────────────────────
+  // (hearts drawn below, +N badge added after if lives>4)
   ctx.textBaseline='middle';ctx.textAlign='left';
-  for(let i=0;i<3;i++){
+  const _livesToShow=Math.min(STATE.lives,4); // show up to 4 hearts, then add +N
+  for(let i=0;i<_livesToShow;i++){
     ctx.font='bold 14px Inter';
     ctx.fillStyle=i<STATE.lives?C.RED:'rgba(148,163,184,0.25)';
     ctx.fillText('♥',8+i*20,18);
@@ -3073,12 +3109,12 @@ function drawHUD(){
   ctx.fillText(`⬡ ${STATE.coins}`,canvas.width-8,13);
   // Quiz progress indicator
   if(STATE.quizzesRequired>0){
-    // Intel counter
+    // Intel counter (row above quiz counter)
   if(STATE.intelsTotalThisLevel>0){
     const allI=STATE.intelsThisLevel>=STATE.intelsTotalThisLevel;
-    ctx.fillStyle=allI?C.EMERALD:C.CYAN;ctx.font=`bold ${allI?'10':'9'}px Inter`;
-    ctx.textAlign='right';ctx.textBaseline='top';
-    ctx.fillText(`📄 ${STATE.intelsThisLevel}/${STATE.intelsTotalThisLevel}`,canvas.width-8,27);
+    ctx.fillStyle=allI?C.EMERALD:C.CYAN;ctx.font='bold 9px Inter';
+    ctx.textAlign='right';ctx.textBaseline='middle';
+    ctx.fillText(`📄 ${STATE.intelsThisLevel}/${STATE.intelsTotalThisLevel}`,canvas.width-8,14);
   }
   const done=STATE.quizzesPassed>=STATE.quizzesRequired;
     ctx.fillStyle=done?C.EMERALD:C.AMBER;ctx.font='bold 9px Inter';
@@ -3392,6 +3428,10 @@ function drawTitle(){
   // ── Bottom tagline ───────────────────────────────────────────────────────
   ctx.fillStyle='rgba(148,163,184,0.7)';ctx.font='bold 10px Inter';ctx.textBaseline='bottom';
   ctx.fillText('5 worlds  ·  20 levels  ·  credential hygiene through play  ·  M = mute',W/2,H-6);
+  // Coin bonus tip
+  const _cb=0.55+0.35*Math.sin(STATE.frame*0.07);
+  ctx.fillStyle=`rgba(251,191,36,${_cb})`;ctx.font='bold 11px Inter';ctx.textBaseline='bottom';
+  ctx.fillText('💰 Collect 90% of coins on any level = +1 LIFE  ·  📄 Find all 3 Intel scrolls to advance',W/2,H-22);
 }
 
 
@@ -3689,7 +3729,7 @@ function gameUpdate(){
       if(!_unlocked){showMsg('Complete the previous level first!',C.RED,150);}
       else{
         STATE.world=_lsw;STATE.level=_lv;
-        STATE.lives=3;STATE.score=0;STATE.coins=0;STATE.powerup=0;
+        STATE.lives=5;STATE.score=0;STATE.coins=0;STATE.powerup=0;
         loadLevel(STATE.world,STATE.level);
         emitEvent('session.started',{world:STATE.world});
       }
@@ -3717,7 +3757,7 @@ function gameUpdate(){
     if(STATE.entryTipActive&&(Keys.pressed('Space')||Keys.pressed('Enter'))){STATE.entryTipActive=false;}
     if(Keys.pressed('Escape')){STATE.screen='pause';STATE.pauseSelectedItem=0;}
     if(Keys.pressed('KeyM'))Audio.toggle();
-    if(Keys.pressed('KeyR')){STATE.lives=3;STATE.powerup=0;BGM.stop();loadLevel(STATE.world,STATE.level);}
+    if(Keys.pressed('KeyR')){STATE.lives=5;STATE.powerup=0;BGM.stop();loadLevel(STATE.world,STATE.level);}
     updatePlayer(lv);
     updateEntities(lv);
 
@@ -3740,7 +3780,7 @@ function gameUpdate(){
     if(q.wrongAnim>0)q.wrongAnim--;
   } else if(scr==='pause'){
     if(Keys.pressed('Escape'))STATE.screen='game';
-    if(Keys.pressed('KeyR')){STATE.lives=3;STATE.powerup=0;BGM.stop();loadLevel(STATE.world,STATE.level);}
+    if(Keys.pressed('KeyR')){STATE.lives=5;STATE.powerup=0;BGM.stop();loadLevel(STATE.world,STATE.level);}
     if(Keys.pressed('ArrowUp'))STATE.pauseSelectedItem=Math.max(0,STATE.pauseSelectedItem-1);
     if(Keys.pressed('ArrowDown'))STATE.pauseSelectedItem=Math.min(3,STATE.pauseSelectedItem+1);
     if(Keys.pressed('Space')||Keys.pressed('Enter')){
@@ -3765,11 +3805,11 @@ function gameUpdate(){
       }
     }
   } else if(scr==='gameover'){
-    if(Keys.pressed('KeyR')){STATE.lives=3;STATE.powerup=0;BGM.stop();loadLevel(STATE.world,STATE.level);}
+    if(Keys.pressed('KeyR')){STATE.lives=5;STATE.powerup=0;BGM.stop();loadLevel(STATE.world,STATE.level);}
     if(Keys.pressed('Escape')){BGM.stop();STATE.levelSelectWorld=STATE.world;STATE.screen='levelselect';}
   } else if(scr==='victory'){
     if(Keys.pressed('Space')){
-      STATE.world=1;STATE.level=1;STATE.lives=3;STATE.score=0;STATE.coins=0;STATE.powerup=0;
+      STATE.world=1;STATE.level=1;STATE.lives=5;STATE.score=0;STATE.coins=0;STATE.powerup=0;
       BGM.stop();STATE.screen='worldselect';
       emitEvent('session.started',{world:1,restart:true});
     }

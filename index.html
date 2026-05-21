@@ -7,11 +7,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;min-height:100vh;font-family:'Inter',sans-serif;overflow:hidden}
-#staging-banner{width:100%;background:#fbbf24;color:#020617;font-size:13px;font-weight:700;text-align:center;padding:5px 0;letter-spacing:.5px;flex-shrink:0}
-#game-wrapper{position:relative;display:flex;flex-direction:column;align-items:center}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Inter',sans-serif}
+body{display:flex;flex-direction:column;align-items:center;justify-content:flex-start}
+#staging-banner{width:100%;background:#fbbf24;color:#020617;font-size:11px;font-weight:700;text-align:center;padding:3px 0;letter-spacing:.5px;flex-shrink:0}
+#game-wrapper{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;min-height:0}
 #gameCanvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;cursor:default;outline:none}
-#controls-strip{background:rgba(2,6,23,0.85);color:#94a3b8;font-size:11px;padding:4px 12px;text-align:center;width:100%;font-family:'Inter',sans-serif;border-top:1px solid #0e7490}
+#controls-strip{background:rgba(2,6,23,0.85);color:#94a3b8;font-size:10px;padding:3px 12px;text-align:center;font-family:'Inter',sans-serif;border-top:1px solid #0e7490;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #aria-live{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 @media(prefers-reduced-motion:reduce){#gameCanvas{animation:none}}
 </style>
@@ -4250,6 +4251,26 @@ function loop(){
   gameDraw();
   requestAnimationFrame(loop);
 }
+
+// ── Full-screen canvas scaling ────────────────────────────────────────────────
+function scaleCanvas(){
+  const banner=document.getElementById('staging-banner');
+  const controls=document.getElementById('controls-strip');
+  const bh=banner?banner.offsetHeight:22;
+  const ch=controls?controls.offsetHeight:22;
+  const availW=window.innerWidth;
+  const availH=window.innerHeight-bh-ch;
+  const scale=Math.min(availW/800,availH/480);
+  const sw=Math.floor(800*scale);
+  const sh=Math.floor(480*scale);
+  const c=document.getElementById('gameCanvas');
+  c.style.width=sw+'px';c.style.height=sh+'px';
+  const wrapper=document.getElementById('game-wrapper');
+  if(wrapper){wrapper.style.width=sw+'px';}
+  if(controls)controls.style.width=sw+'px';
+}
+scaleCanvas();
+window.addEventListener('resize',scaleCanvas);
 
 // Boot
 requestAnimationFrame(loop);

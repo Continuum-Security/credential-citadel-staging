@@ -3691,8 +3691,16 @@ function drawLevelComplete(){
     ctx.fillText('W'+STATE.world+'-'+STATE.level+' · '+mission.topic,W/2,40);
   }
   // Score %
+  // G5-V3-PATCH-C · 2026-05-22 — summary scoring correctness.
+  // STATE.quizzesPassed counts boxes ENGAGED (incremented in handleQuizAnswer
+  // on first-try-correct AND in dismissQuiz on wrong-then-corrected), because
+  // the flagpole gate at L1635 needs "answer N more boxes to advance" — that
+  // semantic must not change. The summary, however, claims correctness, so it
+  // must read first-try-correct count from the per-box log (firstCorrect:true)
+  // — which is also what the per-question rows below render via log.firstCorrect.
   const total=STATE.quizzesRequired||0;
-  const passed=STATE.quizzesPassed||0;
+  const _logEntries=Object.values(STATE.quizLog||{});
+  const passed=_logEntries.filter(l=>l&&l.firstCorrect).length;
   const pct=total>0?Math.round((passed/total)*100):100;
   // G5-V3-PATCH-B · P1-5 — four score-tier hues mapped to canonical Phosphor palette
   const scoreCol=pct===100?C.AMBER:pct>=75?C.EMERALD:pct>=50?C.CYAN:C.RED;

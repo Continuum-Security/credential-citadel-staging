@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CyberIQ — Credential Citadel [STAGING]</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Inter',sans-serif}
@@ -29,15 +29,47 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:flex-
 'use strict';
 
 // ─── TELEMETRY ───────────────────────────────────────────────────────────────
+// G5-V3-PATCH-A · P0-1 · 2026-05-22 — SUPA direct-POST gate.
+// The SUPA block lower in this file ships a hard-coded anon JWT and the
+// staging project URL (qfgoatxuvrqnpghlbbkz.supabase.co). On a public
+// static host (GitHub Pages), that key is browser-readable for anyone
+// who views the bundle, and every emitEvent() previously triggered a
+// fetch() against that anon role with no auth context. The bridge into
+// the parent (postMessage) is the canonical pipe to CyberIQ's
+// unified_game_results write path; the direct-POST is a second,
+// duplicate path that exists solely from the standalone-staging era.
+//
+// Posture for staging: direct-POST is OFF by default. To exercise the
+// SUPA fallback during isolated debugging, run in DevTools:
+//     window.__SUPA_TELEMETRY__ = true;
+// before pressing Play. The postMessage bridge is always on so the
+// parent CyberIQ shell still receives the canonical session/quiz
+// envelope when this game is embedded in /play/g5.
+const TELEMETRY_DIRECT_POST_ENABLED = (typeof window !== 'undefined' && window.__SUPA_TELEMETRY__ === true);
 function emitEvent(name, payload={}) {
   console.log('[TELEMETRY-STAGING]', name, payload);
-  // Supabase tracking — fire-and-forget, game never waits or breaks on network error
-  if(name==='session.started')SUPA.startSession(payload.world||1);
-  else if(name==='wave.completed')SUPA.levelComplete(STATE.world,STATE.level,payload.score||STATE.score,STATE.quizzesPassed||0,STATE.quizzesRequired||0);
-  else if(name==='quiz.answered'&&STATE.quizActive)SUPA.quizAnswered(STATE.quizActive.boxEntity&&STATE.quizActive.boxEntity.quiz||'',STATE.world,STATE.level,payload.answer,payload.correct);
-  else if(name==='session.completed')SUPA.endSession('completed',payload.score||STATE.score,STATE.coins,STATE.world,STATE.quizzesPassed||0,STATE.quizzesRequired||0);
-  else if(name==='session.abandoned')SUPA.endSession('abandoned',payload.score||STATE.score,STATE.coins,Math.max(0,STATE.world-1),STATE.quizzesPassed||0,STATE.quizzesRequired||0);
+  if (TELEMETRY_DIRECT_POST_ENABLED) {
+    // Supabase tracking — fire-and-forget, game never waits or breaks on network error
+    if(name==='session.started')SUPA.startSession(payload.world||1);
+    else if(name==='wave.completed')SUPA.levelComplete(STATE.world,STATE.level,payload.score||STATE.score,STATE.quizzesPassed||0,STATE.quizzesRequired||0);
+    else if(name==='quiz.answered'&&STATE.quizActive)SUPA.quizAnswered(STATE.quizActive.boxEntity&&STATE.quizActive.boxEntity.quiz||'',STATE.world,STATE.level,payload.answer,payload.correct);
+    else if(name==='session.completed')SUPA.endSession('completed',payload.score||STATE.score,STATE.coins,STATE.world,STATE.quizzesPassed||0,STATE.quizzesRequired||0);
+    else if(name==='session.abandoned')SUPA.endSession('abandoned',payload.score||STATE.score,STATE.coins,Math.max(0,STATE.world-1),STATE.quizzesPassed||0,STATE.quizzesRequired||0);
+  }
   try { window.parent.postMessage({type:'cyberiq_event',event:name,...payload},'*'); } catch(e){}
+}
+
+// G5-V3-PATCH-B · P1-3 — single announce() helper writes the next event to the
+// #aria-live region so assistive tech can read state changes (level complete,
+// game over, power-up, life change). Each call REPLACES the previous text so
+// the screen reader queue does not stack — the most recent event is the one
+// that gets read.
+function announce(text){
+  const el = (typeof document !== 'undefined') ? document.getElementById('aria-live') : null;
+  if (!el) return;
+  el.textContent = '';
+  // small async gap so the same string twice in a row still re-announces
+  setTimeout(()=>{ try{ el.textContent = text; }catch(e){} }, 30);
 }
 
 // ─── AUDIO SFX ───────────────────────────────────────────────────────────────
@@ -201,9 +233,12 @@ const INVULN_FRAMES = 45; // 0.75s — was 90 (1.5s too long)
 const GRACE_FRAMES=6;
 const MOVE_STEPS    = 4;       // physics sub-steps per frame
 
+// G5-V3-PATCH-B · P1-5 — palette is the single contract: every hex referenced in render code
+// MUST resolve through this table. LAVA stays as a darker red than RED so flame vs. enemy
+// stays distinguishable in the boss arena; both are inside the Phosphor red family.
 const C = {
   BG:'#020617',CYAN:'#22d3ee',CYAN_DIM:'#0e7490',
-  AMBER:'#fbbf24',EMERALD:'#10b981',RED:'#ef4444',
+  AMBER:'#fbbf24',EMERALD:'#10b981',RED:'#ef4444',RED_DEEP:'#dc2626',
   SLATE:'#94a3b8',WHITE:'#f8fafc',DARK:'#0f172a',
   BOSS:'#475569',GROUND:'#1e3a5f',PLATFORM:'#164e63',
   CASTLE:'#1e293b',LAVA:'#dc2626',WATER:'#0e7490',
@@ -215,36 +250,43 @@ const QUIZZES = {
   pw_strongest:{q:'Which password is strongest?',
     opts:['p@ssword1','sunshine99','horse-staple-battery-fence','MyDog2024!'],
     correct:2,explain:'Long passphrases with random words are exponentially harder to crack than short complex ones. Length beats complexity every time.'},
-  pw_reuse:{q:'Reusing the same password across services is...',
-    opts:['Convenient and safe','A serious security risk','Only risky on http sites','Fine if the password is strong'],
-    correct:1,explain:'Credential stuffing automates login attempts with stolen username/password pairs. One reused password turns a single breach into a chain reaction.'},
-  pw_length:{q:'A 12-character random password takes centuries to brute-force. A 6-character one takes...',
-    opts:['Half as long','A few days or less','Still centuries','Exactly 6 years'],
-    correct:1,explain:'Each extra character multiplies difficulty exponentially. 6-char passwords fall in hours on modern hardware.'},
+  // G5-V3-PATCH-B · P1-1 — rewrote pw_reuse from definitional to behaviour-anchor scenario
+  pw_reuse:{q:'You learn your Spotify password was leaked in a breach. You used the same password for your work email. What do you do first?',
+    opts:['Wait — Spotify is unrelated to work','Change your work email password before anything else','Email IT only if you notice strange activity','Ignore it if the leaked password was complex'],
+    correct:1,explain:'Reused passwords turn one breach into a chain reaction. Credential stuffing tools try the leaked pair across hundreds of services within hours. Rotate every site that shares that password, starting with the most valuable account.'},
+  // G5-V3-PATCH-B · P1-1 — rewrote pw_length from math trivia to choose-the-strongest scenario
+  pw_length:{q:'You have 60 seconds to pick a new password before a meeting. Which choice is hardest to crack?',
+    opts:['6 random characters with !@# mixed in','Your dog\'s name plus the year','Three random words: river-toaster-violet','Last year\'s password with !2 added'],
+    correct:2,explain:'Length is the single biggest factor in brute-force resistance. A 20+ character passphrase of unrelated words has more entropy than a short string of symbols, and it is easier for you to recall.'},
   pw_hygiene:{q:'Which is the BEST password practice?',
     opts:['Rotate passwords monthly','Use a password manager with unique passwords','Write passwords in a notebook','Add ! to an old password'],
     correct:1,explain:'Password managers generate and store unique, strong passwords for every site — no memorisation needed.'},
-  xkcd_length:{q:'The XKCD comic argues random common words together are strong because...',
-    opts:['They are hard to remember','Length and randomness beat complexity','Special chars always win','Short words are unpredictable'],
-    correct:1,explain:'"correct horse battery staple" = ~44 bits of entropy. Entropy from length beats short complex strings every time.'},
-  cred_stuffing:{q:'An attacker steals Password123 from one site and tries it everywhere. This is...',
+  // G5-V3-PATCH-B · P1-1 — rewrote xkcd_length from meta-trivia to teammate-disagreement scenario
+  xkcd_length:{q:'A teammate insists Tr0ub4dor&3 is stronger than correct-horse-battery-staple. What is the strongest counter?',
+    opts:['The exclamation point makes it more secure','Length and randomness beat character substitution','Special characters are mandatory by policy','Both are equally strong'],
+    correct:1,explain:'Character substitution (4 for a, 0 for o) is well known to cracking tools and adds almost no entropy. A 28-character passphrase of four random words is several orders of magnitude harder to brute-force.'},
+  // G5-V3-PATCH-B · P1-1 — rewrote cred_stuffing from label trivia to detection scenario
+  cred_stuffing:{q:'A login attempt from another country tries the same password you used on a breached forum five years ago. What kind of attack is this?',
     opts:['Brute force','Phishing','Credential stuffing','Social engineering'],
-    correct:2,explain:'Credential stuffing automates login attempts using stolen username/password pairs across hundreds of services simultaneously.'},
-  recovery_codes:{q:'Recovery codes for 2FA should be...',
-    opts:['Stored in your email','Printed and locked away offline','Shared with IT support','Memorised then deleted'],
-    correct:1,explain:'Recovery codes are single-use fallbacks. Print them and store offline like a physical key — never in the same digital space as your account.'},
+    correct:2,explain:'Credential stuffing replays stolen username/password pairs across hundreds of services automatically. Old leaks stay dangerous for years, which is why a password-manager + unique-per-site rule matters more than any rotation cadence.'},
+  // G5-V3-PATCH-B · P1-1 — rewrote recovery_codes from definitional to storage-choice scenario
+  recovery_codes:{q:'Your authenticator app gives you 10 single-use backup codes. Where do you store them?',
+    opts:['Email them to yourself','Print them and lock them in a fireproof safe or sealed envelope','DM them to your IT lead','Save them in a Notes file synced to the cloud'],
+    correct:1,explain:'Backup codes bypass MFA. If they live in the same digital container as your account (email, cloud notes), a compromise of that container compromises the codes too. Offline + physically secure keeps them as the genuine last-resort fallback they are designed to be.'},
   zero_trust:{q:'The Zero Trust security model assumes...',
     opts:['Users inside the network are trusted by default','No user or device is trusted — verify every access request','Strong passwords eliminate the need for network verification','VPN access grants full trust inside the perimeter'],
     correct:1,explain:'"Never trust, always verify" — Zero Trust treats every access request as hostile until proven otherwise, regardless of network location or prior authentication.'},
   mfa_types:{q:'Which MFA type is most phishing-resistant?',
     opts:['SMS one-time code','Email magic link','Hardware security key (FIDO2)','Authenticator app TOTP'],
     correct:2,explain:'Hardware keys (FIDO2/WebAuthn) are cryptographically bound to the real domain — a phishing site gets nothing useful.'},
-  sms_risk:{q:'SMS-based MFA can be bypassed by...',
-    opts:['Shoulder surfing only','SIM swapping or SS7 attacks','Keyloggers alone','Nothing — SMS is secure'],
-    correct:1,explain:'SIM swaps redirect your number to an attacker\'s SIM, intercepting all SMS codes in real time.'},
-  pw_manager:{q:'A password manager stores your passwords by...',
-    opts:['Sending them to the cloud in plain text','Encrypting them with your master password','Saving them in a browser cookie','Sharing with the OS keychain'],
-    correct:1,explain:'Zero-knowledge encryption means only your master password can decrypt the vault — even the vendor cannot read it.'},
+  // G5-V3-PATCH-B · P1-1 — rewrote sms_risk from definitional to live-incident scenario
+  sms_risk:{q:'Mid-afternoon your phone drops to "No Service." Five minutes later a password-reset email lands in your inbox. What is most likely happening?',
+    opts:['Just a coverage gap — ignore it','SIM-swap attack in progress — call your carrier from another phone','Routine phishing — delete the email','Wait until tomorrow before investigating'],
+    correct:1,explain:'A sudden, unexplained loss of signal followed by reset traffic is the classic SIM-swap signature. The attacker has ported your number to their device and is now harvesting SMS codes. Carrier intervention in the next few minutes is the only thing that closes the window.'},
+  // G5-V3-PATCH-B · P1-1 — rewrote pw_manager from definitional to phishing-protection scenario
+  pw_manager:{q:'Your password manager refuses to autofill on a page that looks identical to your bank but the URL is b4nkofamerica.com. What is it telling you?',
+    opts:['The manager is broken — type the password manually','The domain does not match your stored bank entry, so it is treating this as a different site','The site needs a manual save','The bank changed its URL'],
+    correct:1,explain:'Password managers bind credentials to the exact domain you saved them on. A look-alike URL is treated as a brand-new site — autofill silently refuses. That refusal is the alert: stop, verify the URL, and never paste the password manually into a page the manager rejected.'},
   autofill_risk:{q:'Browser autofill can leak credentials when...',
     opts:['You use HTTPS','Hidden form fields on phishing pages harvest autocompleted data','You clear cookies','You use a VPN'],
     correct:1,explain:'Malicious sites include hidden fields that autofill silently populates with your saved credentials.'},
@@ -1079,7 +1121,8 @@ function loadLevel(world,level){
       tr.scrollEntities.push({x:s.tx*T+4,y:s.ty*T+4,w:24,h:24,fact:s.fact,collected:false,bobPhase:0});
     }
   }
-  STATE.entryTipText=lv.hasBoss?'BOSS LEVEL: The Reuser awaits!\nCollect 🔥 Fire Flower boxes on the way.\nFireballs deal DOUBLE damage to the boss.':'';
+  // G5-V3-PATCH-B · P1-4 — entry tip rewritten without exclamation or decorative emoji
+  STATE.entryTipText=lv.hasBoss?'BOSS LEVEL — The Reuser is in the next room.\nCollect Fire Flower boxes on the way.\nFireballs deal double damage to the boss.':'';
 
   player=makePlayer(lv.spawn.tx,lv.spawn.ty);
   player.lastCheckpoint={x:player.x,y:player.y}; // use corrected position
@@ -1240,7 +1283,11 @@ function updatePlayer(lv){
     moveEntity(p,lv);
     const tc=p.x-200;camera.x=Math.max(0,Math.min(tc,(lv.w-26)*T));
     p.animTimer++;if(p.animTimer>8){p.animTimer=0;p.animFrame=(p.animFrame+1)%4;}
-    if(STATE.flagClimbTimer===0){STATE.screen='levelcomplete';}
+    // G5-V3-PATCH-B · P1-3 — announce level complete with quiz summary
+    if(STATE.flagClimbTimer===0){
+      STATE.screen='levelcomplete';
+      announce('Level '+STATE.world+'-'+STATE.level+' complete. '+(STATE.quizzesPassed||0)+' of '+(STATE.quizzesRequired||0)+' quiz boxes answered. Press space or enter to continue.');
+    }
     return;
   }
 
@@ -1335,6 +1382,7 @@ function killPlayer(lv){
   Audio.hit();
   STATE.lives--;
   emitEvent('lives.changed',{lives:STATE.lives});
+  announce('Hit. '+STATE.lives+' '+(STATE.lives===1?'life':'lives')+' remaining'); // G5-V3-PATCH-B · P1-3
 }
 
 // killInstant: lava/pit kills — no powerup cushion, immediate death
@@ -1351,6 +1399,7 @@ function killInstant(lv){
   spawnParticles(player.x+player.w/2,player.y+player.h/2,C.RED,14);
   spawnParticles(player.x+player.w/2,player.y+player.h/2,C.LAVA,10);
   emitEvent('lives.changed',{lives:STATE.lives});
+  announce('Instant compromise. '+STATE.lives+' '+(STATE.lives===1?'life':'lives')+' remaining'); // G5-V3-PATCH-B · P1-3
 }
 
 function respawnPlayer(lv){
@@ -1358,6 +1407,7 @@ function respawnPlayer(lv){
     STATE.screen='gameover';
     BGM.stop();
     emitEvent('session.abandoned',{world:STATE.world,level:STATE.level});
+    announce('Game over. Press R to retry, or Escape to return to the level select screen.'); // G5-V3-PATCH-B · P1-3
     return;
   }
   const cp=player.lastCheckpoint;
@@ -1516,7 +1566,8 @@ function showQuiz(e){
   const _idx=[0,1,2,3];
   for(let _i=3;_i>0;_i--){const _j=Math.floor(Math.random()*(_i+1));[_idx[_i],_idx[_j]]=[_idx[_j],_idx[_i]];}
   const _sq={..._qd,opts:_idx.map(i=>_opts[i]),correct:_idx.indexOf(_qd.correct)};
-  STATE.quizActive={quiz:_sq,boxEntity:e,answered:false,selected:-1,result:null,wrongAnim:0,timeout:360};
+  // G5-V3-PATCH-B · P1-2 — focused = current keyboard cursor before commit; selected = committed index (used by feedback render)
+  STATE.quizActive={quiz:_sq,boxEntity:e,answered:false,selected:-1,focused:0,result:null,wrongAnim:0,timeout:360};
   STATE.screen='quiz';
   emitEvent('quiz.shown',{quizId:e.quiz});
   const el=document.getElementById('aria-live');
@@ -1538,25 +1589,25 @@ function deliverBoxReward(e,lv){
       entities.push(makeFireFlower(e.x,e.y));
       spawnParticles(e.x+T/2,e.y,C.EMERALD,12);
       spawnParticles(e.x+T/2,e.y,C.AMBER,8);
-      showMsg('FIRE FLOWER UPGRADE! → PRESS Z TO SHOOT',C.EMERALD,200);
+      showMsg('FIRE FLOWER UPGRADE — press Z to shoot',C.EMERALD,200); // G5-V3-PATCH-B · P1-4
       Audio.powerup(2);
     } else {
       entities.push(makeMushroom(e.x,e.y));
       spawnParticles(e.x+T/2,e.y,C.AMBER,12);
       spawnParticles(e.x+T/2,e.y,C.CYAN,8);
-      showMsg('MUSHROOM! → RUN TO CATCH IT',C.AMBER,160);
+      showMsg('MUSHROOM — run to catch it',C.AMBER,160); // G5-V3-PATCH-B · P1-4
       Audio.powerup(1);
     }
   } else if(e.reward==='fireflower'){
     entities.push(makeFireFlower(e.x,e.y));
     spawnParticles(e.x+T/2,e.y,C.EMERALD,12);
     spawnParticles(e.x+T/2,e.y,C.AMBER,8);
-    showMsg('FIRE FLOWER! → PRESS Z TO SHOOT',C.EMERALD,200);
+    showMsg('FIRE FLOWER — press Z to shoot',C.EMERALD,200); // G5-V3-PATCH-B · P1-4
     Audio.powerup(2);
   } else if(e.reward==='heart'){
     entities.push(makeHeart(e.x+T/2,e.y));
     spawnParticles(e.x+T/2,e.y,C.RED,10);
-    showMsg('RECOVERY CODE HEART! +1 LIFE',C.RED,160);
+    showMsg('RECOVERY CODE — life restored',C.RED,160); // G5-V3-PATCH-B · P1-4
     Audio.powerup(4);
   } else if(e.reward&&e.reward.startsWith('coins')){
     const n=parseInt(e.reward.replace('coins',''))||5;
@@ -1568,248 +1619,6 @@ function deliverBoxReward(e,lv){
   }
 }
 
-function updateCoin(e,lv){
-  if(e.collected)return;
-  e.spinAngle+=0.1;
-  if(!player||player.dead)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    e.collected=true;STATE.coins++;STATE.score+=50;STATE.coinsThisLevel++;
-    Audio.coin();spawnParticles(e.x+5,e.y,C.COIN,4);
-    emitEvent('coin.collected',{});
-  }
-}
-
-function updateIntelScroll(e,lv){
-  if(e.collected)return;
-  e.bobPhase+=0.07;e.glowPhase+=0.05;
-  // Gentle bob
-  e._drawY=e.y+Math.sin(e.bobPhase)*3;
-  if(!player||player.dead||player.invuln>0)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e._drawY||e.y,e.w,e.h)){
-    e.collected=true;
-    STATE.intelsThisLevel++;
-    Audio.powerup(1);
-    // Flash effect
-    STATE._intelFlash=12;
-    // Show popup
-    STATE.intelOverlay={content:e.content,timer:99999}; // 6 seconds
-    spawnParticles(e.x+12,e._drawY||e.y,C.CYAN,14);
-    spawnParticles(e.x+12,e._drawY||e.y,'#f0f9ff',8);
-    emitEvent('intel.collected',{idx:STATE.intelsThisLevel,total:STATE.intelsTotalThisLevel});
-  }
-}
-
-function drawIntelScroll(e,sx){
-  const dy=e._drawY||e.y;
-  const gp=e.glowPhase||0;
-  const f=STATE.frame;
-  // Large pulsing beacon glow
-  const ga=0.18+0.14*Math.sin(gp);
-  ctx.fillStyle=`rgba(34,211,238,${ga})`;ctx.fillRect(sx-10,dy-10,48,52);
-  // Bigger body (28x36px)
-  rrFill(sx,dy,28,36,5,'#0a1628');
-  rrFill(sx+1,dy+1,26,34,4,'#1e3a5f');
-  // Header stripe
-  rrFill(sx,dy,28,10,4,'rgba(34,211,238,0.55)');
-  ctx.fillStyle=C.WHITE;ctx.font='bold 7px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText('📄 INTEL',sx+14,dy+5);
-  // Body lines suggesting content
-  ctx.fillStyle=`rgba(34,211,238,${0.6+0.3*Math.sin(gp*1.3)})`;
-  for(let i=0;i<4;i++)ctx.fillRect(sx+4,dy+14+i*5,20,2);
-  // Animated downward arrow indicator below scroll
-  const arr=0.5+0.5*Math.sin(f*0.15);
-  ctx.fillStyle=`rgba(34,211,238,${arr})`;
-  ctx.font='10px Inter';ctx.textAlign='center';ctx.textBaseline='top';
-  ctx.fillText('▼',sx+14,dy+38);
-  // Outer ring pulse
-  const rp=0.25+0.25*Math.sin(gp*1.5);
-  ctx.strokeStyle=`rgba(34,211,238,${rp})`;ctx.lineWidth=2;
-  roundRect(sx-5,dy-5,38,46,8);ctx.stroke();
-}
-
-function updateMushroom(e,lv){
-  if(e.collected)return;
-  if(e.emerging){
-    e.y-=0.6;
-    if(e.y<=e.targetY){
-      // Critique #2: pause at top FIRST (Mario-style), then start walking
-      e.pauseFrames=(e.pauseFrames||0)+1;
-      if(e.pauseFrames<28)return; // hold at top for ~0.5s
-      e.emerging=false;e.vx=1.4;
-    }
-    return;
-  }
-  e.vy+=GRAVITY;moveEntity(e,lv);
-  if(e.onGround&&e.vx===0)e.vx=1.4;
-  if(!player||player.dead)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    e.collected=true;
-    const oldPow=STATE.powerup;
-    STATE.powerup=Math.min(STATE.powerup+1,5);
-    // V3-spec: player VISUALLY GROWS when collecting mushroom (tiny→strong)
-    if(oldPow===0&&player){
-      player.h=PH+14;  // 28→42: matches V3's "slightly larger sprite"
-      player.y-=14;    // shift up so feet stay on ground
-    }
-    Audio.powerup(STATE.powerup);
-    spawnParticles(e.x+14,e.y,C.AMBER,14);
-    spawnParticles(e.x+14,e.y,C.CYAN,8);
-    showMsg('STRONG-PASSWORD UNLOCKED! You grew stronger!',C.AMBER,150);
-    STATE.tr.powerupCard={...TR.powerupMsg.mushroom,timer:140};
-    emitEvent('power_up.collected',{type:'mushroom',tier:STATE.powerup});
-  }
-}
-
-function updateFireFlower(e,lv){
-  if(e.collected)return;
-  if(e.emerging){e.y-=0.6;if(e.y<=e.targetY)e.emerging=false;return;}
-  e.bobPhase+=0.08;e.y+=Math.sin(e.bobPhase)*0.35;
-  if(!player||player.dead)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    e.collected=true;
-    const oldPow=STATE.powerup;
-    STATE.powerup=Math.max(STATE.powerup,2);
-    // Grow to strong height if was tiny
-    if(oldPow===0&&player){
-      player.h=PH+14;
-      player.y-=14;
-    }
-    Audio.powerup(2);
-    spawnParticles(e.x+12,e.y,C.EMERALD,16);
-    spawnParticles(e.x+12,e.y,C.AMBER,10);
-    spawnParticles(e.x+12,e.y,C.CYAN,6);
-    showMsg('FIRE FLOWER! Press Z to shoot fireballs!',C.EMERALD,180);
-    STATE.tr.powerupCard={...TR.powerupMsg.fireflower,timer:140};
-    emitEvent('power_up.collected',{type:'fireflower',tier:2});
-  }
-}
-
-function updateFireball(e,lv){
-  if(!e.alive)return;
-  e.vy+=GRAVITY*0.5;e.x+=e.vx;e.y+=e.vy;
-  const tx=Math.floor((e.x+5)/T),ty=Math.floor((e.y+8)/T);
-  if(isSolid(getTile(lv,tx,ty))){
-    if(e.vy>0){e.vy*=-0.6;e.bounces++;}else e.alive=false;
-  }
-  if(isSolid(getTile(lv,Math.floor(e.x/T),Math.floor(e.y/T))))e.alive=false;
-  if(e.bounces>3)e.alive=false;
-  if(e.x<camera.x-T*2||e.x>camera.x+820)e.alive=false;
-  for(const en of entities){
-    if(!en.alive)continue;
-    if(!['goomba','spiny','cheep','boss'].includes(en.type))continue;
-    if(rectRect(e.x,e.y,e.w,e.h,en.x,en.y,en.w,en.h)){
-      if(en.type==='boss'){
-        en.hp-=1;Audio.bossHit();
-        spawnParticles(en.x+28,en.y+36,C.CYAN,5);
-        if(en.hp<=0)bossDied(en);
-        // Training: boss phase 2 dramatic reveal
-        if(en.hp<=en.maxHp/2&&en.phase===1){en.phase=2;STATE.tr.bossRevealTimer=120;}
-      } else {
-        en.fireHitCount=(en.fireHitCount||0)+1;
-        if(en.fireHitCount>=en.fireHits){
-          en.alive=false;en.stompTimer=15;STATE.score+=150;
-          spawnParticles(en.x+en.w/2,en.y,C.AMBER,7);
-          const _fbArr=TR.stompText[en.type];const _fbTxt=Array.isArray(_fbArr)?_fbArr[Math.floor(Math.random()*_fbArr.length)]:(_fbArr||'Threat eliminated');addFloatText(_fbTxt,en.x+en.w/2,en.y-6,C.AMBER);
-          emitEvent('threat.hit',{type:en.type,method:'fireball'});
-        }
-      }
-      e.alive=false;Audio.stomp();break;
-    }
-  }
-}
-
-function updateHeart(e,lv){
-  if(e.collected)return;
-  e.vy+=GRAVITY*0.3;e.x+=e.vx;e.y+=e.vy;e.age++;
-  if(e.age>200)e.collected=true;
-  if(!player||player.dead)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    e.collected=true;if(STATE.lives<6)STATE.lives++;Audio.powerup(4);
-    spawnParticles(e.x+T/2,e.y,C.RED,8);
-    STATE.tr.powerupCard={...TR.powerupMsg.heart,timer:140};
-    emitEvent('lives.changed',{lives:STATE.lives});
-    emitEvent('power_up.collected',{type:'heart'});
-  }
-}
-
-function updateBoss(e,lv){
-  if(!e.alive)return;
-  // Knowledge gate at 50% HP
-  if(!e.knowledgeGateShown&&e.hp<=e.maxHp/2){
-    e.knowledgeGateShown=true;
-    STATE.quizActive={
-      quiz:QUIZZES['least_privilege'],
-      boxEntity:{...e,_bossGate:true},
-      answered:false,selected:-1,result:null,
-      wrongAnim:0,timeout:360
-    };
-    STATE.screen='quiz';
-    BGM.start('boss');
-    e.stunTimer=180;
-    return;
-  }
-  if(e.stunTimer>0){e.stunTimer--;return;}
-
-  e.vy+=GRAVITY;
-  e.x+=e.vx;
-  if(e.x<camera.x+50){e.vx=Math.abs(e.vx);}
-  if(e.x>camera.x+650){e.vx=-Math.abs(e.vx);}
-  moveEntity(e,lv);
-
-  // Throw papers
-  e.throwTimer--;
-  if(e.throwTimer<=0){
-    e.throwTimer=e.phase===2?28:55;
-    const highArc=(e._paperCount=(e._paperCount||0)+1)%2===0;
-    const _cIdx=Math.floor(Math.random()*TR.paperCreds.length);
-    entities.push({
-      type:'paper',x:e.x+e.w/2,y:e.y+20,
-      vx:(player&&!player.dead)?(player.x>e.x?2.2:-2.2):2.2,
-      vy:highArc?-7:-3,
-      alive:true,w:10,h:10,animAngle:0,
-      cred:TR.paperCreds[_cIdx]
-    });
-  }
-
-  if(!player||player.dead||player.invuln>0)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    if(player.vy>0&&player.y+player.h<=e.y+18){
-      e.hp-=(STATE.powerup>=2)?2:1;
-      player.vy=-8;Audio.bossHit();
-      spawnParticles(e.x+28,e.y,C.SLATE,6);
-      e.stunTimer=15;
-      if(e.hp<=0)bossDied(e);
-    } else if(STATE.starTimer>0||STATE.powerup===5){
-      e.hp-=2;if(e.hp<=0)bossDied(e);
-    } else {
-      STATE.tr.deathCause='boss';killPlayer(lv);
-    }
-  }
-  e.animTimer++;if(e.animTimer>8){e.animTimer=0;e.animFrame=(e.animFrame+1)%2;}
-}
-
-function bossDied(e){
-  e.alive=false;
-  Audio.levelComplete();
-  spawnParticles(e.x+28,e.y+36,C.CYAN,20);
-  spawnParticles(e.x+28,e.y+36,C.AMBER,20);
-  STATE.score+=2000;
-  emitEvent('threat.hit',{type:'boss',method:'defeated'});
-  setTimeout(()=>{
-    STATE.screen='levelcomplete';
-    emitEvent('wave.completed',{world:STATE.world,level:STATE.level,score:STATE.score});
-  },1600);
-}
-
-function updatePaper(e,lv){
-  if(!e.alive)return;
-  e.vy+=GRAVITY;e.x+=e.vx;e.y+=e.vy;e.animAngle+=0.12;
-  if(e.y>lv.h*T){e.alive=false;return;}
-  if(!player||player.dead||player.invuln>0)return;
-  if(rectRect(player.x,player.y,player.w,player.h,e.x,e.y,e.w,e.h)){
-    e.alive=false;STATE.tr.deathCause='paper';killPlayer(lv);
-  }
-}
 
 function checkFlagpole(e,lv){
   if(!player||player.dead)return;
@@ -1920,25 +1729,25 @@ function deliverBoxReward(e,lv){
       entities.push(makeFireFlower(e.x,e.y));
       spawnParticles(e.x+T/2,e.y,C.EMERALD,12);
       spawnParticles(e.x+T/2,e.y,C.AMBER,8);
-      showMsg('FIRE FLOWER UPGRADE! → PRESS Z TO SHOOT',C.EMERALD,200);
+      showMsg('FIRE FLOWER UPGRADE — press Z to shoot',C.EMERALD,200); // G5-V3-PATCH-B · P1-4
       Audio.powerup(2);
     } else {
       entities.push(makeMushroom(e.x,e.y));
       spawnParticles(e.x+T/2,e.y,C.AMBER,12);
       spawnParticles(e.x+T/2,e.y,C.CYAN,8);
-      showMsg('MUSHROOM! → RUN TO CATCH IT',C.AMBER,160);
+      showMsg('MUSHROOM — run to catch it',C.AMBER,160); // G5-V3-PATCH-B · P1-4
       Audio.powerup(1);
     }
   } else if(e.reward==='fireflower'){
     entities.push(makeFireFlower(e.x,e.y));
     spawnParticles(e.x+T/2,e.y,C.EMERALD,12);
     spawnParticles(e.x+T/2,e.y,C.AMBER,8);
-    showMsg('FIRE FLOWER! → PRESS Z TO SHOOT',C.EMERALD,200);
+    showMsg('FIRE FLOWER — press Z to shoot',C.EMERALD,200); // G5-V3-PATCH-B · P1-4
     Audio.powerup(2);
   } else if(e.reward==='heart'){
     entities.push(makeHeart(e.x+T/2,e.y));
     spawnParticles(e.x+T/2,e.y,C.RED,10);
-    showMsg('RECOVERY CODE HEART! +1 LIFE',C.RED,160);
+    showMsg('RECOVERY CODE — life restored',C.RED,160); // G5-V3-PATCH-B · P1-4
     Audio.powerup(4);
   } else if(e.reward&&e.reward.startsWith('coins')){
     const n=parseInt(e.reward.replace('coins',''))||5;
@@ -2036,9 +1845,11 @@ function updateMushroom(e,lv){
     Audio.powerup(STATE.powerup);
     spawnParticles(e.x+14,e.y,C.AMBER,14);
     spawnParticles(e.x+14,e.y,C.CYAN,8);
-    showMsg('STRONG-PASSWORD UNLOCKED! You grew stronger!',C.AMBER,150);
+    // G5-V3-PATCH-B · P1-4 — power-up announcement reads as a state, not a shout
+    showMsg('STRONG PASSWORD UNLOCKED — one extra hit before going down',C.AMBER,150);
     STATE.tr.powerupCard={...TR.powerupMsg.mushroom,timer:140};
     emitEvent('power_up.collected',{type:'mushroom',tier:STATE.powerup});
+    announce('Strong password unlocked. You can take one more hit before going down.'); // G5-V3-PATCH-B · P1-3
   }
 }
 
@@ -2060,9 +1871,11 @@ function updateFireFlower(e,lv){
     spawnParticles(e.x+12,e.y,C.EMERALD,16);
     spawnParticles(e.x+12,e.y,C.AMBER,10);
     spawnParticles(e.x+12,e.y,C.CYAN,6);
-    showMsg('FIRE FLOWER! Press Z to shoot fireballs!',C.EMERALD,180);
+    // G5-V3-PATCH-B · P1-4 — instruction reads as a state, not a shout
+    showMsg('FIRE FLOWER UNLOCKED — press Z to shoot fireballs',C.EMERALD,180);
     STATE.tr.powerupCard={...TR.powerupMsg.fireflower,timer:140};
     emitEvent('power_up.collected',{type:'fireflower',tier:2});
+    announce('Fire flower unlocked. Press Z to shoot fireballs.'); // G5-V3-PATCH-B · P1-3
   }
 }
 
@@ -2111,6 +1924,7 @@ function updateHeart(e,lv){
     STATE.tr.powerupCard={...TR.powerupMsg.heart,timer:140};
     emitEvent('lives.changed',{lives:STATE.lives});
     emitEvent('power_up.collected',{type:'heart'});
+    announce('Recovery code collected. '+STATE.lives+' '+(STATE.lives===1?'life':'lives')+' available.'); // G5-V3-PATCH-B · P1-3
   }
 }
 
@@ -2180,6 +1994,7 @@ function bossDied(e){
   setTimeout(()=>{
     STATE.screen='levelcomplete';
     emitEvent('wave.completed',{world:STATE.world,level:STATE.level,score:STATE.score});
+    announce('The Reuser defeated. Castle '+STATE.world+'-'+STATE.level+' complete. Press space to continue.'); // G5-V3-PATCH-B · P1-3
   },1600);
 }
 
@@ -2857,7 +2672,7 @@ function drawBoss(e,sx){
   ellipseFill(bx+e.w-12,by+19,3,3,C.BG);
 
   // Mouth — frown arc
-  ctx.strokeStyle=stunned?C.SLATE:'#dc2626';ctx.lineWidth=2;
+  ctx.strokeStyle=stunned?C.SLATE:C.RED_DEEP;ctx.lineWidth=2; // G5-V3-PATCH-B · P1-5 — palette token
   ctx.beginPath();ctx.arc(bx+e.w/2,by+e.h*0.65,12,0.2,Math.PI-0.2);ctx.stroke();
 
   // "Password123" badge
@@ -2875,7 +2690,8 @@ function drawBoss(e,sx){
   // Phase 2 fireball hint (flashing)
   if(e.phase===2&&Math.floor(STATE.frame/45)%2===0){
     ctx.fillStyle=C.AMBER;ctx.font='bold 10px Inter';ctx.textAlign='center';ctx.textBaseline='bottom';
-    ctx.fillText('🔥 USE FIREBALLS!',bx+e.w/2,by-20);
+    // G5-V3-PATCH-B · P1-4 — drop the decorative emoji + exclamation; the cue itself is what reads
+  ctx.fillText('USE FIREBALLS',bx+e.w/2,by-20);
   }
 }
 
@@ -3202,11 +3018,13 @@ function drawBossReveal(){
   // Big text
   const CW=380,CH=72,CX=(canvas.width-CW)/2,CY=canvas.height/2-60;
   rrFill(CX,CY,CW,CH,8,'rgba(2,6,23,0.95)');
-  ctx.strokeStyle='#dc2626';ctx.lineWidth=2;roundRect(CX,CY,CW,CH,8);ctx.stroke();
-  ctx.fillStyle='#dc2626';ctx.font='bold 14px Inter';ctx.textAlign='center';ctx.textBaseline='top';
+  // G5-V3-PATCH-B · P1-5 — boss-phase card stroke + fill via palette token
+  ctx.strokeStyle=C.RED_DEEP;ctx.lineWidth=2;roundRect(CX,CY,CW,CH,8);ctx.stroke();
+  ctx.fillStyle=C.RED_DEEP;ctx.font='bold 14px Inter';ctx.textAlign='center';ctx.textBaseline='top';
   ctx.fillText('⚠ PHASE 2 ENGAGED',CX+CW/2,CY+10);
   ctx.fillStyle=C.SLATE;ctx.font='10px Inter';ctx.textBaseline='top';
-  ctx.fillText('The Reuser escalates — increased throw rate!',CX+CW/2,CY+32);
+  // G5-V3-PATCH-B · P1-4 — phase-change line as observation, not exclamation
+  ctx.fillText('The Reuser escalates — throw rate increases',CX+CW/2,CY+32);
   ctx.fillStyle=C.AMBER;ctx.font='bold 10px Inter';
   ctx.fillText('🔥 Fireballs (Z key) deal double damage.',CX+CW/2,CY+52);
   ctx.restore();
@@ -3288,16 +3106,16 @@ function drawIntelOverlay(){
   hg.addColorStop(0,'#0e7490');hg.addColorStop(1,'#164e63');
   ctx.fillStyle=hg;
   ctx.beginPath();ctx.roundRect(cx,cy,cw,44,{upperLeft:12,upperRight:12,lowerLeft:0,lowerRight:0});ctx.fill();
-  // Header: icon + title
-  ctx.fillStyle='#f0f9ff';ctx.font='bold 15px Inter';
+  // Header: icon + title — G5-V3-PATCH-B · P1-5 — palette tokens replace pale-blue inline hex
+  ctx.fillStyle=C.WHITE;ctx.font='bold 15px Inter';
   ctx.textAlign='left';ctx.textBaseline='middle';
   ctx.fillText(icon+'  '+title,cx+16,cy+22);
   // Progress
   const prog=STATE.intelsThisLevel+' of '+STATE.intelsTotalThisLevel+' found';
-  ctx.fillStyle='#7dd3fc';ctx.font='11px Inter';ctx.textAlign='right';
+  ctx.fillStyle=C.CYAN;ctx.font='11px Inter';ctx.textAlign='right'; // G5-V3-PATCH-B · P1-5
   ctx.fillText(prog,cx+cw-14,cy+22);
   // Body text - word wrap
-  ctx.fillStyle='#e2e8f0';ctx.font='14px Inter';ctx.textAlign='left';
+  ctx.fillStyle=C.WHITE;ctx.font='14px Inter';ctx.textAlign='left'; // G5-V3-PATCH-B · P1-5 — body reads as neutral observation
   let ty2=cy+62;
   const maxW=cw-48;
   const rawLines=body.split('\n');
@@ -3502,7 +3320,7 @@ function drawQuizOverlay(){
     // Option buttons
     qd.opts.forEach((opt,i)=>{
       const by=optY+i*52,bh=44,bx=CX+18,bw=CW-36;
-      const hover=i===q.selected;
+      const hover=i===q.focused; // G5-V3-PATCH-B · P1-2 — preview state keyed off keyboard focus before commit
 
       // Button bg
       roundRect(bx,by,bw,bh,8);
@@ -3528,15 +3346,19 @@ function drawQuizOverlay(){
       ctx.textAlign='left';ctx.textBaseline='middle';
       ctx.fillText(opt,bx+44,by+22);
     });
-    ctx.fillStyle='rgba(100,116,139,0.6)';ctx.font='9px Inter';
+    ctx.fillStyle='rgba(100,116,139,0.6)';
+    // G5-V3-PATCH-B · P1-6 — JetBrains Mono for HUD eyebrows (loaded in <head>)
+    ctx.font='9px "JetBrains Mono",monospace';
     ctx.textAlign='center';ctx.textBaseline='top';
-    ctx.fillText('PRESS  1 · 2 · 3 · 4  OR CLICK',CX+CW/2,CY+CH-16);
+    // G5-V3-PATCH-B · P1-2 — surface the keyboard contract in the footer
+    ctx.fillText('1·2·3·4  COMMITS   ←↑→↓  MOVES   ENTER  COMMITS   CLICK  ALSO WORKS',CX+CW/2,CY+CH-16);
 
   } else {
     // Feedback card
     const resultOK=q.result==='correct';
     const resultCol=resultOK?C.EMERALD:C.RED;
-    const resultLabel=resultOK?'✓  CORRECT!':'✗  NOT QUITE';
+    // G5-V3-PATCH-B · P1-4 — drop CORRECT exclamation; glyph + colour carry the signal already
+    const resultLabel=resultOK?'✓  CORRECT':'✗  NOT QUITE';
 
     // Result badge
     roundRect(CX+CW/2-100,optY,200,38,10);
@@ -3859,7 +3681,8 @@ function drawLevelComplete(){
   ctx.textAlign='center';
   // Title
   ctx.fillStyle=C.EMERALD;ctx.font='bold 26px Inter';ctx.textBaseline='middle';
-  ctx.fillText('LEVEL COMPLETE!',W/2,22);
+  // G5-V3-PATCH-B · P1-4 — drop exclamation; ALL CAPS already carries label register
+  ctx.fillText('LEVEL COMPLETE',W/2,22);
   const lv=STATE.currentLevel;
   const lvId=lv?lv.id:'';
   const mission=TR.mission[lvId];
@@ -3871,7 +3694,8 @@ function drawLevelComplete(){
   const total=STATE.quizzesRequired||0;
   const passed=STATE.quizzesPassed||0;
   const pct=total>0?Math.round((passed/total)*100):100;
-  const scoreCol=pct===100?'#f59e0b':pct>=75?'#34d399':pct>=50?'#60a5fa':'#fb923c';
+  // G5-V3-PATCH-B · P1-5 — four score-tier hues mapped to canonical Phosphor palette
+  const scoreCol=pct===100?C.AMBER:pct>=75?C.EMERALD:pct>=50?C.CYAN:C.RED;
   ctx.save();
   ctx.shadowColor=scoreCol;ctx.shadowBlur=22;
   ctx.fillStyle=scoreCol;ctx.font='bold 50px Inter';ctx.textBaseline='middle';
@@ -3891,7 +3715,8 @@ function drawLevelComplete(){
   if(STATE._coinBonusLife){
     const bla=0.7+0.3*Math.sin(STATE.frame*0.1);
     ctx.fillStyle=`rgba(251,191,36,${bla})`;ctx.font='bold 10px Inter';ctx.textBaseline='middle';
-    ctx.fillText('💰 COIN COLLECTOR BONUS — +1 LIFE EARNED!',W/2,148);
+    // G5-V3-PATCH-B · P1-4 — drop the emoji + exclamation, keep ALL CAPS as label register
+  ctx.fillText('COIN COLLECTOR BONUS · ONE LIFE RESTORED',W/2,148);
   }
   ctx.fillStyle='rgba(71,85,105,0.55)';ctx.font='8px Inter';ctx.textBaseline='middle';
   ctx.fillText('── KNOWLEDGE CHECK ──',W/2,160);
@@ -4038,7 +3863,8 @@ function drawVictory(){
   const pulse=1+0.05*Math.sin(STATE.frame*0.07);
   ctx.save();ctx.translate(canvas.width/2,110);ctx.scale(pulse,pulse);
   ctx.fillStyle=C.AMBER;ctx.font='bold 30px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText('CREDENTIALS SECURED!',0,0);ctx.restore();
+  // G5-V3-PATCH-B · P1-4 — victory headline as label, not shout
+  ctx.fillText('CREDENTIALS SECURED',0,0);ctx.restore();
   ctx.fillStyle=C.CYAN;ctx.font='18px Inter';ctx.textAlign='center';ctx.textBaseline='top';
   ctx.fillText('Master Breach-Broker Defeated',canvas.width/2,168);
   ctx.fillStyle=C.WHITE;ctx.font='13px Inter';
@@ -4093,7 +3919,7 @@ canvas.addEventListener('click',ev=>{
 });
 
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
-function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pressed('Enter')){STATE.intelOverlay=null;STATE._intelContinueRect=null;Keys.flush();}return;}
+function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pressed('Enter')){STATE.intelOverlay=null;STATE._intelContinueRect=null;}Keys.flush();return;} // G5-V3-PATCH-A · P0-2 — flush even when overlay stays up so non-dismiss keys (M/R/Esc) don't bleed to next frame
   STATE.frame++;
   const scr=STATE.screen;
 
@@ -4135,8 +3961,8 @@ function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pre
   } else if(scr==='game'){
     const lv=STATE.currentLevel;
     updateTraining();
-    // Intel overlay dismiss on Space
-    if(STATE.intelOverlay&&(Keys.pressed('Space')||Keys.pressed('Enter'))){STATE.intelOverlay=null;STATE._intelContinueRect=null;return;}
+    // Intel overlay dismiss on Space — G5-V3-PATCH-A · P0-2 flush before early-return
+    if(STATE.intelOverlay&&(Keys.pressed('Space')||Keys.pressed('Enter'))){STATE.intelOverlay=null;STATE._intelContinueRect=null;Keys.flush();return;}
     // Castle entry tip dismiss — Space/Enter clears it before normal input
     if(STATE.entryTipActive&&(Keys.pressed('Space')||Keys.pressed('Enter'))){STATE.entryTipActive=false;}
     if(Keys.pressed('Escape')){STATE.screen='pause';STATE.pauseSelectedItem=0;}
@@ -4157,9 +3983,19 @@ function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pre
 
   } else if(scr==='quiz'){
     const q=STATE.quizActive;
-    if(!q){STATE.screen='game';return;}
-    for(let i=0;i<4;i++)if(Keys.pressed(`Digit${i+1}`))handleQuizAnswer(i);
-    if(q.answered&&(Keys.pressed('Space')||Keys.pressed('Enter')||Keys.pressed('Escape')))dismissQuiz();
+    if(!q){STATE.screen='game';Keys.flush();return;} // G5-V3-PATCH-A · P0-2 flush before early-return
+    // G5-V3-PATCH-B · P1-2 — arrow-key navigation pre-selects an option; Enter commits.
+    // 1/2/3/4 remain as a power-user shortcut and still commit in one keystroke.
+    if(!q.answered){
+      if(Keys.pressed('ArrowUp')||Keys.pressed('ArrowLeft'))q.focused=(q.focused+3)%4;
+      else if(Keys.pressed('ArrowDown')||Keys.pressed('ArrowRight'))q.focused=(q.focused+1)%4;
+      else if(Keys.pressed('Enter'))handleQuizAnswer(q.focused);
+      else {
+        for(let i=0;i<4;i++)if(Keys.pressed(`Digit${i+1}`)){handleQuizAnswer(i);break;}
+      }
+    } else {
+      if(Keys.pressed('Space')||Keys.pressed('Enter')||Keys.pressed('Escape'))dismissQuiz();
+    }
     // No timer — quiz stays open until the player answers (better for learning, per spec)
     if(q.wrongAnim>0)q.wrongAnim--;
   } else if(scr==='pause'){

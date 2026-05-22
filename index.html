@@ -1286,7 +1286,8 @@ function updatePlayer(lv){
     // G5-V3-PATCH-B · P1-3 — announce level complete with quiz summary
     if(STATE.flagClimbTimer===0){
       STATE.screen='levelcomplete';
-      announce('Level '+STATE.world+'-'+STATE.level+' complete. '+(STATE.quizzesPassed||0)+' of '+(STATE.quizzesRequired||0)+' quiz boxes answered. Press space or enter to continue.');
+      // G5-V3-PATCH-C — read the W-L pair in full so screen readers stay aligned with the visible HUD
+      announce('World '+STATE.world+', '+(STATE.level===5?'castle':'level '+STATE.level)+' complete. '+(STATE.quizzesPassed||0)+' of '+(STATE.quizzesRequired||0)+' quiz boxes answered. Press space or enter to continue.');
     }
     return;
   }
@@ -3200,7 +3201,12 @@ function drawHUD(){
   // ── CENTRE: world label + power-up badge ─────────────────────────────────
   ctx.textAlign='center';
   ctx.fillStyle=C.WHITE;ctx.font='bold 11px Inter';
-  ctx.fillText(`WORLD ${STATE.world}-${STATE.level===5?'C':STATE.level}`,canvas.width/2,11);
+  // G5-V3-PATCH-C — disambiguate Mario W-L shorthand. "WORLD 1-4" reads as
+  // "1 of 4" to non-gamers; spell it out as "WORLD 1 · LEVEL 4" and surface
+  // the total ("of 5") so the player knows how much remains. Castles render
+  // as "LEVEL CASTLE" rather than the cryptic "C".
+  const _hudLevel=STATE.level===5?'CASTLE':STATE.level+' of 5';
+  ctx.fillText(`WORLD ${STATE.world} of 5 · LEVEL ${_hudLevel}`,canvas.width/2,11);
   const badges=['BASE','STRONG-PW','FLAME','CAPE','STAR','CROWN'];
   const badgeCols=[C.SLATE,C.CYAN,C.AMBER,'#7c3aed','#f59e0b',C.AMBER];
   const bc=badgeCols[STATE.powerup]||C.SLATE;
@@ -3688,7 +3694,9 @@ function drawLevelComplete(){
   const mission=TR.mission[lvId];
   if(mission){
     ctx.fillStyle='rgba(34,211,238,0.65)';ctx.font='10px Inter';
-    ctx.fillText('W'+STATE.world+'-'+STATE.level+' · '+mission.topic,W/2,40);
+    // G5-V3-PATCH-C — same shorthand expansion on the level-complete card
+    const _lcLevel=STATE.level===5?'CASTLE':'LEVEL '+STATE.level;
+    ctx.fillText('WORLD '+STATE.world+' · '+_lcLevel+' · '+mission.topic,W/2,40);
   }
   // Score %
   // G5-V3-PATCH-C · 2026-05-22 — summary scoring correctness.

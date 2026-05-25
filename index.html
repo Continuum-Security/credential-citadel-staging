@@ -307,134 +307,34 @@ const QUIZZES = {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SUPABASE — credential-citadel-staging (anonymous play, fire-and-forget)
-// Project: https://qfgoatxuvrqnpghlbbkz.supabase.co
-// All calls are async and non-blocking — game never waits for the backend
+// SUPABASE — staging direct-POST shim (stubbed)
+//
+// G5-V3-PATCH-D · P1-5 · 2026-05-22 — the body of this object previously shipped a
+// hard-coded anon JWT, the project URL, and four REST table names. Even with the
+// emitEvent() gate from Patch A (TELEMETRY_DIRECT_POST_ENABLED) preventing actual
+// network traffic, the credentials were still readable in a bundle screenshot. To
+// remove the optics risk pre-Nish-UAT, the body is now a no-op shim. The methods
+// retain their signatures so the gated call sites in emitEvent() (L50-54) remain
+// callable; they just log instead of firing.
+//
+// If you need direct-to-Supabase telemetry during isolated debugging:
+//   1) Restore the SUPA body from `audits/g5-credential-citadel/G5-V3-PATCH-A.md`
+//      (or git: `git show HEAD~N:index.html | sed -n '309,438p'`)
+//   2) Rotate the anon key on the staging Supabase project (the previous key
+//      lives in git history — assume compromised the moment Patch D landed)
+//   3) Open DevTools and set `window.__SUPA_TELEMETRY__ = true` before pressing Play
+//
+// The canonical write path remains `window.parent.postMessage(...)` →
+// CyberIQ shell → cyberiq_post_session edge function. Always-on.
 // ═══════════════════════════════════════════════════════════════════════════════
 const SUPA = {
-  url: 'https://qfgoatxuvrqnpghlbbkz.supabase.co',
-  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmZ29hdHh1dnJxbnBnaGxiYmt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODg4MjYsImV4cCI6MjA5NDc2NDgyNn0.t0BwpjCafce1gOKwwPQYHMDm0qsh-VU5tfMwxk1CIm4',
   sessionId: null,
   anonymousId: null,
-  sessionStartTime: 0,
-
-  // Get or create a persistent anonymous ID stored in localStorage
-  init() {
-    let aid = null;
-    try { aid = localStorage.getItem('cc_anon_id'); } catch(e) {}
-    if (!aid) {
-      aid = (crypto.randomUUID ? crypto.randomUUID() : 'anon-'+Date.now()+'-'+Math.random().toString(36).slice(2));
-      try { localStorage.setItem('cc_anon_id', aid); } catch(e) {}
-    }
-    this.anonymousId = aid;
-    return aid;
-  },
-
-  // Fire-and-forget POST — never blocks or throws to the game
-  _post(table, body) {
-    if (!this.anonymousId) this.init();
-    fetch(`${this.url}/rest/v1/${table}`, {
-      method: 'POST',
-      headers: {
-        'apikey': this.key,
-        'Authorization': `Bearer ${this.key}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify(body)
-    }).catch(()=>{});  // silent fail — game never breaks on network error
-  },
-
-  // Fire-and-forget PATCH by id
-  _patch(table, id, body) {
-    fetch(`${this.url}/rest/v1/${table}?id=eq.${id}`, {
-      method: 'PATCH',
-      headers: {
-        'apikey': this.key,
-        'Authorization': `Bearer ${this.key}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify(body)
-    }).catch(()=>{});
-  },
-
-  // Called when player presses PLAY — creates session row
-  startSession(world) {
-    this.init();
-    this.sessionId = (crypto.randomUUID ? crypto.randomUUID() : 'sess-'+Date.now()+'-'+Math.random().toString(36).slice(2));
-    this.sessionStartTime = Date.now();
-    this._post('game_sessions', {
-      id: this.sessionId,
-      anonymous_id: this.anonymousId,
-      game_type: 'credential-citadel',
-      status: 'started',
-      current_world: world,
-      current_level: 1,
-      score: 0,
-      lives: 3,
-      coins: 0
-    });
-  },
-
-  // Called each time a level/wave is completed
-  levelComplete(world, level, score, quizCorrect, quizTotal) {
-    if (!this.sessionId) return;
-    this._post('level_completions', {
-      session_id: this.sessionId,
-      anonymous_id: this.anonymousId,
-      world, level,
-      score_at_level: score,
-      quiz_correct: quizCorrect,
-      quiz_total: quizTotal
-    });
-    this._patch('game_sessions', this.sessionId, {
-      current_world: world,
-      current_level: level,
-      score, quiz_correct: quizCorrect, quiz_total: quizTotal
-    });
-  },
-
-  // Called when player answers a quiz box
-  quizAnswered(quizKey, world, level, answerIdx, correct) {
-    if (!this.sessionId || !quizKey) return;
-    this._post('quiz_answers', {
-      session_id: this.sessionId,
-      anonymous_id: this.anonymousId,
-      quiz_key: quizKey,
-      world, level,
-      answer_idx: answerIdx,
-      correct
-    });
-  },
-
-  // Called on victory or game-over — finalises the session
-  endSession(status, score, coins, worldsCompleted, quizCorrect, quizTotal) {
-    if (!this.sessionId) return;
-    const ms = Date.now() - this.sessionStartTime;
-    const acc = quizTotal > 0 ? Math.round((quizCorrect/quizTotal)*100) : 0;
-    const tier = score>=10000?'platinum':score>=5000?'gold':score>=2000?'silver':'bronze';
-    this._patch('game_sessions', this.sessionId, {
-      status, score, coins,
-      worlds_completed: worldsCompleted,
-      quiz_correct: quizCorrect,
-      quiz_total: quizTotal,
-      completed_at: new Date().toISOString()
-    });
-    this._post('unified_game_results', {
-      game_id: 'credential-citadel',
-      anonymous_id: this.anonymousId,
-      session_duration_ms: ms,
-      decision_accuracy: acc,
-      quiz_correct: quizCorrect,
-      quiz_total: quizTotal,
-      cyber_iq_score: score,
-      raw_score: score,
-      tier,
-      meta: { worlds_completed: worldsCompleted, coins }
-    });
-    this.sessionId = null;  // reset for next play
-  }
+  init(){ return null; },
+  startSession(world){ console.log('[SUPA-stub] startSession', {world}); },
+  levelComplete(world, level, score, quizCorrect, quizTotal){ console.log('[SUPA-stub] levelComplete', {world, level, score, quizCorrect, quizTotal}); },
+  quizAnswered(quizKey, world, level, answerIdx, correct){ console.log('[SUPA-stub] quizAnswered', {quizKey, world, level, answerIdx, correct}); },
+  endSession(status, score, coins, worldsCompleted, quizCorrect, quizTotal){ console.log('[SUPA-stub] endSession', {status, score, coins, worldsCompleted, quizCorrect, quizTotal}); }
 };
 
 // ─── TRAINING DATA ────────────────────────────────────────────────────────────
@@ -452,19 +352,22 @@ const TR={
     cheep: ['Phishing Cheep','Hides in familiar-looking waters.','Even trusted-looking links can bite.'],
     boss:  ['THE REUSER','Master breach-broker.','Exploits every reused password you own.'],
   },
+  // G5-V3-PATCH-D · P1-2 — stomp text reads as observation, not celebration
   stompText:{
-    goomba:['Credential stuffing blocked','Reuse attack stopped!','Password breach thwarted','Stuffing attempt failed','Account defended!','One less threat'],
-    spiny: ['SIM swap route closed','SS7 attack blocked!','Phone hijack stopped','MFA bypass denied','Mobile threat down!','Intercept prevented'],
-    cheep: ['Phishing lure destroyed','Deceptive link killed','Social engineering blocked','Credential theft stopped','Phish avoided!','Fake site neutralised'],
+    goomba:['Credential stuffing blocked','Reuse attack stopped','Password breach thwarted','Stuffing attempt failed','Account defended','One less threat'],
+    spiny: ['SIM swap route closed','SS7 attack blocked','Phone hijack stopped','MFA bypass denied','Mobile threat down','Intercept prevented'],
+    cheep: ['Phishing lure destroyed','Deceptive link killed','Social engineering blocked','Credential theft stopped','Phish avoided','Fake site neutralised'],
   },
+  // G5-V3-PATCH-D · P1-2 — death-modal headers as labels, not shouts; the red wash + body
+  // copy carry the gravity. Pattern matches the rest of the doctrine.
   deathMsg:{
-    goomba:{h:'Credential Stuffing Hit!',    b:'One reused password = attacks across every site you visited. Use unique credentials per site.'},
-    spiny: {h:'SIM Swap Attack!',            b:'SS7 flaws can reroute your SMS codes. Use an authenticator app or hardware key instead of SMS.'},
-    cheep: {h:'Phishing Got You!',           b:'Attackers copy trusted environments perfectly. Always check the domain — not the visual design.'},
-    lava:  {h:'Instant Compromise!',         b:'Phishing links and malicious files give immediate access — there is no recovery once you click.'},
-    boss:  {h:'Identity Stolen!',            b:'The Reuser feeds on reused passwords. A password manager cuts off his entire supply chain.'},
-    paper: {h:'Stolen Credential Landed!',   b:'Boss throws real passwords from breach databases. Unique credentials per site stop the cascade entirely.'},
-    unknown:{h:'Identity Lost!',             b:'Strong unique passwords + MFA together stop over 99% of all credential-based attacks.'},
+    goomba:{h:'Credential Stuffing Hit',    b:'One reused password = attacks across every site you visited. Use unique credentials per site.'},
+    spiny: {h:'SIM Swap Attack',            b:'SS7 flaws can reroute your SMS codes. Use an authenticator app or hardware key instead of SMS.'},
+    cheep: {h:'Phishing Caught You',        b:'Attackers copy trusted environments perfectly. Always check the domain — not the visual design.'},
+    lava:  {h:'Instant Compromise',         b:'Phishing links and malicious files give immediate access — there is no recovery once you click.'},
+    boss:  {h:'Identity Stolen',            b:'The Reuser feeds on reused passwords. A password manager cuts off his entire supply chain.'},
+    paper: {h:'Stolen Credential Landed',   b:'Boss throws real passwords from breach databases. Unique credentials per site stop the cascade entirely.'},
+    unknown:{h:'Identity Lost',             b:'Strong unique passwords + MFA together stop over 99% of all credential-based attacks.'},
   },
   powerupMsg:{
     mushroom:  {icon:'🛡',title:'STRONG PASSWORD', tip:'Length beats complexity — a 20-char passphrase resists brute force for millions of years.'},
@@ -1287,7 +1190,12 @@ function updatePlayer(lv){
     if(STATE.flagClimbTimer===0){
       STATE.screen='levelcomplete';
       // G5-V3-PATCH-C — read the W-L pair in full so screen readers stay aligned with the visible HUD
-      announce('World '+STATE.world+', '+(STATE.level===5?'castle':'level '+STATE.level)+' complete. '+(STATE.quizzesPassed||0)+' of '+(STATE.quizzesRequired||0)+' quiz boxes answered. Press space or enter to continue.');
+      // G5-V3-PATCH-D · P0-3 — align SR announce with the visible card. Patch C switched
+      // the card to derive correctness from quizLog.firstCorrect; the announce was still
+      // reading STATE.quizzesPassed (boxes engaged). Two surfaces, one truth.
+      const _annLog=Object.values(STATE.quizLog||{});
+      const _annCorrect=_annLog.filter(l=>l&&l.firstCorrect).length;
+      announce('World '+STATE.world+', '+(STATE.level===5?'castle':'level '+STATE.level)+' complete. '+_annCorrect+' of '+(STATE.quizzesRequired||0)+' quiz boxes answered correctly on first try. Press space or enter to continue.');
     }
     return;
   }
@@ -1575,51 +1483,6 @@ function showQuiz(e){
   if(el)el.textContent=_qd.q+'. Options: '+_qd.opts.join(', ');
 }
 
-function deliverBoxReward(e,lv){
-  // Training: IQ flash for answering correctly
-  const _qk=e.quiz;if(_qk&&QUIZZES[_qk]){
-    const _topics={'pw_strongest':'Password Strength','pw_reuse':'Credential Stuffing','pw_length':'Brute Force Defense','pw_hygiene':'Password Management','xkcd_length':'Entropy Math','cred_stuffing':'Credential Stuffing','recovery_codes':'Account Recovery','zero_trust':'Zero Trust','mfa_types':'Phishing-Resistant MFA','sms_risk':'SIM Swap Risk','pw_manager':'Password Managers','autofill_risk':'Autofill Security','least_privilege':'Least Privilege','jit_elevation':'JIT Access','passkeys':'Passkeys / FIDO2','account_recovery':'Account Recovery'};
-    const _topic=_topics[_qk]||'Security Knowledge';
-    const _iqIdx=Object.keys(_topics).indexOf(_qk);
-    STATE.tr.iqFlash={text:'+'+(_iqIdx>=0?20+_iqIdx:20)+' IQ  ·  '+_topic,timer:150,color:C.EMERALD};
-  }
-  if(!e.reward)return;
-  if(e.reward==='mushroom'){
-    // Mario-style smart upgrade: already strong? give fire flower instead
-    if(STATE.powerup>=1){
-      entities.push(makeFireFlower(e.x,e.y));
-      spawnParticles(e.x+T/2,e.y,C.EMERALD,12);
-      spawnParticles(e.x+T/2,e.y,C.AMBER,8);
-      showMsg('FIRE FLOWER UPGRADE — press Z to shoot',C.EMERALD,200); // G5-V3-PATCH-B · P1-4
-      Audio.powerup(2);
-    } else {
-      entities.push(makeMushroom(e.x,e.y));
-      spawnParticles(e.x+T/2,e.y,C.AMBER,12);
-      spawnParticles(e.x+T/2,e.y,C.CYAN,8);
-      showMsg('MUSHROOM — run to catch it',C.AMBER,160); // G5-V3-PATCH-B · P1-4
-      Audio.powerup(1);
-    }
-  } else if(e.reward==='fireflower'){
-    entities.push(makeFireFlower(e.x,e.y));
-    spawnParticles(e.x+T/2,e.y,C.EMERALD,12);
-    spawnParticles(e.x+T/2,e.y,C.AMBER,8);
-    showMsg('FIRE FLOWER — press Z to shoot',C.EMERALD,200); // G5-V3-PATCH-B · P1-4
-    Audio.powerup(2);
-  } else if(e.reward==='heart'){
-    entities.push(makeHeart(e.x+T/2,e.y));
-    spawnParticles(e.x+T/2,e.y,C.RED,10);
-    showMsg('RECOVERY CODE — life restored',C.RED,160); // G5-V3-PATCH-B · P1-4
-    Audio.powerup(4);
-  } else if(e.reward&&e.reward.startsWith('coins')){
-    const n=parseInt(e.reward.replace('coins',''))||5;
-    for(let c=0;c<n;c++)
-      particles.push(makeParticle(e.x+T/2,e.y,C.COIN,(Math.random()-0.5)*4,-5-Math.random()*3,40));
-    STATE.coins+=n;STATE.score+=n*10;
-    showMsg(`+${n} COINS`,C.COIN,80);
-    Audio.coin();
-  }
-}
-
 
 function checkFlagpole(e,lv){
   if(!player||player.dead)return;
@@ -1629,13 +1492,14 @@ function checkFlagpole(e,lv){
     // Intel gate: must collect all 3 intel scrolls
     if(STATE.intelsTotalThisLevel>0&&STATE.intelsThisLevel<STATE.intelsTotalThisLevel){
       const ri=STATE.intelsTotalThisLevel-STATE.intelsThisLevel;
-      showMsg(`Collect ${ri} more INTEL scroll${ri>1?'s':''} (cyan 📄) to advance!`,C.CYAN,150);
+      // G5-V3-PATCH-D · P1-3 — drop emoji-as-decoration + exclamation
+      showMsg(`Collect ${ri} more intel scroll${ri>1?'s':''} (the cyan cards) to advance`,C.CYAN,150);
       return;
     }
     // Quiz gate: must answer all boxes before advancing
     if(STATE.quizzesRequired>0&&STATE.quizzesPassed<STATE.quizzesRequired){
       const remaining=STATE.quizzesRequired-STATE.quizzesPassed;
-      showMsg(`Answer ${remaining} more quiz box${remaining>1?'es':''} (?) to advance!`,C.AMBER,150);
+      showMsg(`Answer ${remaining} more quiz box${remaining>1?'es':''} (?) to advance`,C.AMBER,150); // G5-V3-PATCH-D · P1-3
       return;
     }
     // Coin bonus life check — 90% of level coins collected
@@ -1934,13 +1798,13 @@ function updateBoss(e,lv){
   // Knowledge gate at 50% HP
   if(!e.knowledgeGateShown&&e.hp<=e.maxHp/2){
     e.knowledgeGateShown=true;
-    STATE.quizActive={
-      quiz:QUIZZES['least_privilege'],
-      boxEntity:{...e,_bossGate:true},
-      answered:false,selected:-1,result:null,
-      wrongAnim:0,timeout:360
-    };
-    STATE.screen='quiz';
+    // G5-V3-PATCH-D · P0-2 — boss gate now routes through showQuiz() so Fisher-Yates
+    // shuffle runs (boss-quiz options no longer always appear in source order), focused:0
+    // initialises keyboard navigation (previously NaN-on-arrow → wrong answer → boss
+    // healed to full + Phase 2), and the question is announced via #aria-live for SR users.
+    // The _bossGate flag rides on the cloned entity stored in STATE.quizActive.boxEntity
+    // and is still read by the wrong/right handlers at L1639/L1654/L1668.
+    showQuiz({...e, quiz:'least_privilege', _bossGate:true});
     BGM.start('boss');
     e.stunTimer=180;
     return;
@@ -2786,7 +2650,14 @@ function updateTraining(){
       if(!tr.seenEnemies.has(e.type)){
         tr.seenEnemies.add(e.type);
         const lines=TR.enemyTip[e.type]||[];
-        /* enemy tooltips disabled */
+        // G5-V3-PATCH-D · P1-6 — restore the deleted push call so first-encounter teaching
+        // fires. Particularly material for L1-2 Spiny: L1-1 teaches "stomp = win" with the
+        // Goomba, then L1-2 introduces Spiny at tx=15 before the fire flower at tx=25.
+        // Without the tooltip, the player applies the "stomp" rule, dies, and loses a life
+        // to a mechanic they had no way to learn first.
+        if(lines.length>0){
+          tr.enemyTooltips.push({type:e.type, x:e.x+e.w/2, y:e.y, timer:180, lines:lines});
+        }
       }
     }
   }
@@ -3106,7 +2977,11 @@ function drawIntelOverlay(){
   const hg=ctx.createLinearGradient(cx,cy,cx+cw,cy);
   hg.addColorStop(0,'#0e7490');hg.addColorStop(1,'#164e63');
   ctx.fillStyle=hg;
-  ctx.beginPath();ctx.roundRect(cx,cy,cw,44,{upperLeft:12,upperRight:12,lowerLeft:0,lowerRight:0});ctx.fill();
+  // G5-V3-PATCH-D · P0-4 — the {upperLeft,...} object syntax is non-spec and is silently
+  // ignored by modern Canvas2D engines (all four corners render with radius 0). Switch to
+  // the array form [tl, tr, br, bl] so the top corners stay rounded and the bottom-of-header
+  // corners stay square, joining the card body's rounded bottom underneath.
+  ctx.beginPath();ctx.roundRect(cx,cy,cw,44,[12,12,0,0]);ctx.fill();
   // Header: icon + title — G5-V3-PATCH-B · P1-5 — palette tokens replace pale-blue inline hex
   ctx.fillStyle=C.WHITE;ctx.font='bold 15px Inter';
   ctx.textAlign='left';ctx.textBaseline='middle';
@@ -3721,11 +3596,13 @@ function drawLevelComplete(){
     ctx.fillStyle='rgba(148,163,184,0.65)';ctx.font='10px Inter';ctx.textBaseline='middle';
     ctx.fillText(passed+' of '+total+' questions correct',W/2,114);
   }
-  const encMsg=pct===100?'Perfect score — you nailed every question! 🏆':
-               pct>=75?'Excellent! Strong security instincts 🛡':
-               pct>=50?'Good effort! Keep building those defences 💪':
-               pct>=25?'Nice start — every lesson makes you stronger 🔑':
-                       'Keep going — every mistake is a lesson 🌱';
+  // G5-V3-PATCH-D · P1-1 — drop exclamations and decorative emoji; the colour-coded
+  // percentage above already carries the affect, the per-question rows below carry detail.
+  const encMsg=pct===100?'Perfect score — every question correct on first try':
+               pct>=75?'Strong showing — sound security instincts on display':
+               pct>=50?'Solid effort — keep building the habits that defend you':
+               pct>=25?'A foundation is forming — each lesson compounds':
+                       'Every mistake is a lesson — keep going';
   ctx.fillStyle=C.WHITE;ctx.font='bold 12px Inter';ctx.textBaseline='middle';
   ctx.fillText(encMsg,W/2,130);
   if(STATE._coinBonusLife){
@@ -3940,7 +3817,8 @@ function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pre
   const scr=STATE.screen;
 
   if(scr==='title'){
-    if(Keys.pressed('Space')){Audio.init();BGM.setMuted(Audio.isMuted());STATE.levelSelectWorld=1;STATE.screen='levelselect';STATE._lsIdx=Math.min(4,STATE.levelProgress[STATE.levelSelectWorld]||0);}
+    // G5-V3-PATCH-D · P1-4 — pair Enter with Space; every other screen accepts both, the title was a regression
+    if(Keys.pressed('Space')||Keys.pressed('Enter')){Audio.init();BGM.setMuted(Audio.isMuted());STATE.levelSelectWorld=1;STATE.screen='levelselect';STATE._lsIdx=Math.min(4,STATE.levelProgress[STATE.levelSelectWorld]||0);}
   } else if(scr==='levelselect'){
     const _lsw=STATE.levelSelectWorld;
     const _lsProg=STATE.levelProgress[_lsw]||0;
@@ -3952,7 +3830,7 @@ function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pre
       const _li=(STATE._lsIdx||0);
       const _lv=_lsLevels[_li];
       const _unlocked=_lv<=_lsProg+1;
-      if(!_unlocked){showMsg('Complete the previous level first!',C.RED,150);}
+      if(!_unlocked){showMsg('Complete the previous level first',C.RED,150);} // G5-V3-PATCH-D · P1-3
       else{
         STATE.world=_lsw;STATE.level=_lv;
         STATE.lives=3;STATE.score=0;STATE.coins=0;STATE.powerup=0;
@@ -3968,7 +3846,7 @@ function gameUpdate(){ if(STATE.intelOverlay){if(Keys.pressed('Space')||Keys.pre
     if(Keys.pressed('Space')||Keys.pressed('Enter')){
       const wi=STATE.worldSelectIndex;
       if(!STATE.worldsUnlocked[wi]){
-        showMsg('Beat the castle of the previous world to unlock this!',C.RED,180);
+        showMsg('Beat the castle of the previous world to unlock this one',C.RED,180); // G5-V3-PATCH-D · P1-3
       } else {
         STATE.levelSelectWorld=wi+1;STATE.screen='levelselect';STATE._lsIdx=Math.min(4,STATE.levelProgress[STATE.levelSelectWorld]||0);
       } // end else (world unlocked)
